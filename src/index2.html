@@ -7,6 +7,7 @@
     <style>
         /* --- CYBERPUNK / GAMING UI --- */
         body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Courier New', Courier, monospace; }
+        video#webcam { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: cover; transform: scaleX(-1); z-index: 1; }
         
         #canvas-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 2; }
         #video-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 1; object-fit: cover; transform: scaleX(-1); }
@@ -165,6 +166,9 @@
         const startBtn = document.getElementById('start-btn');
         const retryBtn = document.getElementById('retry-btn');
         const statusText = document.getElementById('status-text');
+        const MIRROR = true;
+        const HAND_SCALE = { x: 7.0, y: 5.5 };
+        const HAND_OFFSET = { x: 0, y: 0 };
 
         // --- Three.js Setup ---
         const scene = new THREE.Scene();
@@ -399,11 +403,13 @@
                         
                         // 1. 手の位置をThree.js座標に変換
                         // X軸はミラーリングのため反転
-                        const x = (1 - lm[9].x) * 2 - 1; // 中指の付け根付近をカーソル中心に
-                        const y = -(lm[9].y * 2 - 1);
+                        const normX = MIRROR ? (1 - lm[9].x) : lm[9].x; // 中指の付け根付近をカーソル中心に
+                        const normY = lm[9].y;
+                        const x = (normX * 2 - 1) * HAND_SCALE.x + HAND_OFFSET.x;
+                        const y = (-(normY * 2 - 1)) * HAND_SCALE.y + HAND_OFFSET.y;
                         
                         // Z位置はカメラ手前で固定 (殴る判定用)
-                        const handPos = new THREE.Vector3(x * 8, y * 5, 2); // 画面の手前(Z=2)あたり
+                        const handPos = new THREE.Vector3(x, y, 2); // 画面の手前(Z=2)あたり
                         
                         handMesh.position.copy(handPos);
                         handMesh.visible = true;

@@ -7,6 +7,7 @@
     <style>
         /* --- CYBERPUNK UI --- */
         body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Courier New', Courier, monospace; }
+        video#webcam { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: cover; transform: scaleX(-1); z-index: 1; }
         
         #canvas-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 2; }
         #video-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 1; object-fit: cover; transform: scaleX(-1); }
@@ -131,6 +132,9 @@
 
         const videoElement = document.getElementById('webcam');
         const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+        const MIRROR = true; // 映像を反転表示する
+        const HAND_SCALE = { x: 7.0, y: 5.5 }; // 画面上の移動量スケール
+        const HAND_OFFSET = { x: 0, y: 0 };     // 必要に応じて微調整
         const uiLayer = document.getElementById('ui-layer');
         const scoreEl = document.getElementById('score');
         const levelEl = document.getElementById('level');
@@ -148,6 +152,7 @@
         const scene = new THREE.Scene();
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
         camera.position.z = 5; 
+        camera.rotation.y = 0; // ミラー映像に合わせるだけなので追加回転なし
 
         const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
@@ -346,9 +351,11 @@
                         const lm = results.landmarks[0];
                         
                         // 座標変換
-                        const x = (1 - lm[9].x) * 2 - 1; 
-                        const y = -(lm[9].y * 2 - 1);
-                        const handPos = new THREE.Vector3(x * 8, y * 5, 0); 
+                        const normX = MIRROR ? (1 - lm[9].x) : lm[9].x;
+                        const normY = lm[9].y;
+                        const x = (normX * 2 - 1) * HAND_SCALE.x + HAND_OFFSET.x; 
+                        const y = (-(normY * 2 - 1)) * HAND_SCALE.y + HAND_OFFSET.y;
+                        const handPos = new THREE.Vector3(x, y, 0); 
                         
                         handGroup.position.copy(handPos);
                         handGroup.visible = true;
