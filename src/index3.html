@@ -7,7 +7,7 @@
     <style>
         /* --- Y2K / CYBER DESIGN --- */
         body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Courier New', Courier, monospace; }
-        video#webcam { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: cover; transform: scaleX(-1); z-index: 1; }
+        video#webcam { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: cover; z-index: 1; }
 
         #canvas-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 2; }
         #video-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 1; object-fit: cover; transform: scaleX(-1); /* 自撮り用反転 */ }
@@ -105,9 +105,9 @@
         const statusText = document.getElementById('status-text');
         const startBtn = document.getElementById('start-btn');
         const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-        const MIRROR = true;
-        const HAND_SCALE = { x: 6.5, y: 5.0 };
-        const HAND_OFFSET = { x: 0, y: 0 };
+        let MIRROR = true; // 実際のカメラ種別で後から更新
+        let HAND_SCALE = { x: 6.5, y: 5.0 };
+        let HAND_OFFSET = { x: 0, y: 0 };
         let handLandmarker = undefined;
         let webcamRunning = false;
         
@@ -180,6 +180,18 @@
             for (const constraints of constraintsList) {
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                    const settings = stream.getVideoTracks()[0]?.getSettings();
+                    const facing = settings?.facingMode || preferredFacing;
+                    const isEnv = facing === 'environment' || facing === 'back';
+
+                    MIRROR = !isEnv;
+                    videoElement.style.transform = MIRROR ? 'scaleX(-1)' : 'none';
+
+                    if (isMobile && isEnv) {
+                        HAND_SCALE = { x: 6.0, y: 4.8 };
+                        HAND_OFFSET = { x: 0, y: 0 };
+                    }
+
                     videoElement.srcObject = stream;
                     videoElement.addEventListener("loadeddata", predictWebcam, { once: true });
                     webcamRunning = true;

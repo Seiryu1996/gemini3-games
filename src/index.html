@@ -7,7 +7,7 @@
     <style>
         /* --- CYBERPUNK UI --- */
         body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Courier New', Courier, monospace; }
-        video#webcam { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: cover; transform: scaleX(-1); z-index: 1; }
+        video#webcam { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: cover; z-index: 1; }
         
         #canvas-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 2; }
         #video-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 1; object-fit: cover; transform: scaleX(-1); }
@@ -132,9 +132,9 @@
 
         const videoElement = document.getElementById('webcam');
         const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-        const MIRROR = true; // 映像を反転表示する
-        const HAND_SCALE = { x: 7.0, y: 5.5 }; // 画面上の移動量スケール
-        const HAND_OFFSET = { x: 0, y: 0 };     // 必要に応じて微調整
+        let MIRROR = true; // 実際のカメラに合わせて起動後に上書き
+        let HAND_SCALE = { x: 7.0, y: 5.5 }; // 画面上の移動量スケール
+        let HAND_OFFSET = { x: 0, y: 0 };     // 必要に応じて微調整
         const uiLayer = document.getElementById('ui-layer');
         const scoreEl = document.getElementById('score');
         const levelEl = document.getElementById('level');
@@ -238,6 +238,20 @@
             for (const constraints of constraintsList) {
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                    const settings = stream.getVideoTracks()[0]?.getSettings();
+                    const facing = settings?.facingMode || preferredFacing;
+                    const isEnv = facing === 'environment' || facing === 'back';
+
+                    // 映像ミラーとスケールをカメラ種別に合わせる
+                    MIRROR = !isEnv; // 前面のみミラー
+                    videoElement.style.transform = MIRROR ? 'scaleX(-1)' : 'none';
+
+                    // モバイル背面は画角が広いことが多いので少しスケール調整
+                    if (isMobile && isEnv) {
+                        HAND_SCALE = { x: 6.0, y: 4.8 };
+                        HAND_OFFSET = { x: 0, y: 0 };
+                    }
+
                     videoElement.srcObject = stream;
                     videoElement.addEventListener("loadeddata", loop, { once: true });
                     return;

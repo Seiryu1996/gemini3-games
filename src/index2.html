@@ -7,7 +7,7 @@
     <style>
         /* --- CYBERPUNK / GAMING UI --- */
         body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Courier New', Courier, monospace; }
-        video#webcam { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: cover; transform: scaleX(-1); z-index: 1; }
+        video#webcam { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: cover; z-index: 1; }
         
         #canvas-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 2; }
         #video-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 1; object-fit: cover; transform: scaleX(-1); }
@@ -166,9 +166,9 @@
         const startBtn = document.getElementById('start-btn');
         const retryBtn = document.getElementById('retry-btn');
         const statusText = document.getElementById('status-text');
-        const MIRROR = true;
-        const HAND_SCALE = { x: 7.0, y: 5.5 };
-        const HAND_OFFSET = { x: 0, y: 0 };
+        let MIRROR = true; // 起動後にカメラ種別で上書き
+        let HAND_SCALE = { x: 7.0, y: 5.5 };
+        let HAND_OFFSET = { x: 0, y: 0 };
 
         // --- Three.js Setup ---
         const scene = new THREE.Scene();
@@ -258,6 +258,18 @@
             for (const constraints of constraintsList) {
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                    const settings = stream.getVideoTracks()[0]?.getSettings();
+                    const facing = settings?.facingMode || preferredFacing;
+                    const isEnv = facing === 'environment' || facing === 'back';
+
+                    MIRROR = !isEnv;
+                    videoElement.style.transform = MIRROR ? 'scaleX(-1)' : 'none';
+
+                    if (isMobile && isEnv) {
+                        HAND_SCALE = { x: 6.0, y: 4.8 };
+                        HAND_OFFSET = { x: 0, y: 0 };
+                    }
+
                     videoElement.srcObject = stream;
                     videoElement.addEventListener("loadeddata", loop, { once: true });
                     return;
