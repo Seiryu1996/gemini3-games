@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>NEON SMASH: TURBO</title>
+    <style>
+        /* --- CYBERPUNK UI --- */
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Courier New', Courier, monospace; }
+        
+        #canvas-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 2; }
+        #video-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 1; object-fit: cover; transform: scaleX(-1); }
+
+        #ui-layer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none;
+            display: flex; flex-direction: column; justify-content: space-between;
+        }
+
+        .hud-top {
+            padding: 15px; display: flex; justify-content: space-between; align-items: flex-start;
+            text-shadow: 0 0 10px rgba(0, 255, 255, 0.8); color: #fff;
+        }
+        .score-box { font-size: 24px; font-weight: bold; color: #0ff; }
+        .level-box { font-size: 20px; color: #f0f; text-align: right; }
+
+        #center-msg {
+            position: absolute; top: 30%; width: 100%; text-align: center;
+            font-size: 50px; font-weight: 900; color: #ff0; 
+            text-shadow: 2px 2px 0px #f00; display: none;
+            animation: pop 0.2s ease-out;
+        }
+        @keyframes pop { from { transform: scale(0); } to { transform: scale(1.5); } }
+
+        .hud-bottom { padding: 20px; width: 100%; box-sizing: border-box; }
+        .progress-container {
+            width: 100%; height: 15px; background: rgba(255, 255, 255, 0.2);
+            border: 2px solid #0ff; position: relative; skew: -20deg;
+        }
+        #timer-bar {
+            width: 100%; height: 100%; background: #0f0; transition: width 0.1s linear;
+        }
+        #quota-text { text-align: center; color: #0ff; margin-bottom: 5px; font-weight: bold; font-size: 18px;}
+
+        .screen {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.9); color: #0f0; z-index: 100;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+        }
+        h1 { font-size: 50px; margin: 0; text-shadow: 0 0 20px #0f0; letter-spacing: 5px; text-align: center; font-style: italic;}
+        p { font-size: 18px; color: #fff; text-align: center; max-width: 80%; line-height: 1.5;}
+        
+        .btn {
+            margin-top: 30px; padding: 15px 60px; background: #0f0; 
+            border: none; color: #000; font-weight: bold; font-size: 24px; cursor: pointer; pointer-events: auto;
+            text-transform: uppercase; letter-spacing: 2px;
+            box-shadow: 0 0 20px #0f0; clip-path: polygon(10% 0, 100% 0, 100% 70%, 90% 100%, 0 100%, 0 30%);
+            transition: transform 0.1s;
+        }
+        .btn:active { transform: scale(0.95); }
+        .hidden { display: none !important; }
+
+        #flash {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: white; opacity: 0; pointer-events: none; z-index: 5;
+            transition: opacity 0.05s;
+        }
+
+    </style>
+</head>
+<body>
+
+    <video id="webcam" autoplay playsinline muted></video>
+    <div id="canvas-container"></div>
+    <div id="flash"></div>
+
+    <div id="ui-layer" class="hidden">
+        <div class="hud-top">
+            <div class="score-box">SCORE: <span id="score">0</span></div>
+            <div class="level-box">LV.<span id="level">1</span></div>
+        </div>
+        <div id="center-msg">LEVEL UP!</div>
+        <div class="hud-bottom">
+            <div id="quota-text">REMAINING: <span id="quota">5</span></div>
+            <div class="progress-container">
+                <div id="timer-bar"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="start-screen" class="screen">
+        <h1>NEON<br>SMASH</h1>
+        <p style="margin-top:20px;">
+            <span style="color:#0ff">MAKE A FIST [✊]</span><br>
+            AND PUNCH THE CUBES!
+        </p>
+        <p id="status-text" style="color:#666; font-size:12px; margin-top:10px;">LOADING SYSTEM...</p>
+        <button id="start-btn" class="btn hidden">START</button>
+    </div>
+
+    <div id="game-over-screen" class="screen hidden">
+        <h1 style="color:#f00; text-shadow: 0 0 20px #f00;">GAME OVER</h1>
+        <p style="font-size: 24px; margin-top:20px;">SCORE: <span id="final-score">0</span></p>
+        <button id="retry-btn" class="btn">RETRY</button>
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "@mediapipe/tasks-vision": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision';
+
+        // --- Game Config ---
+        const GAME_CONFIG = {
+            baseTime: 20,
+            baseQuota: 5,
+            spawnRate: 50,
+            hitRange: 2.0 // 当たり判定の広さ (XY平面)
+        };
+
+        let state = {
+            isPlaying: false, score: 0, level: 1, hitsInLevel: 0,
+            quota: GAME_CONFIG.baseQuota, timeLeft: GAME_CONFIG.baseTime, spawnTimer: 0
+        };
+
+        const videoElement = document.getElementById('webcam');
+        const uiLayer = document.getElementById('ui-layer');
+        const scoreEl = document.getElementById('score');
+        const levelEl = document.getElementById('level');
+        const quotaEl = document.getElementById('quota');
+        const timerBar = document.getElementById('timer-bar');
+        const centerMsg = document.getElementById('center-msg');
+        const startScreen = document.getElementById('start-screen');
+        const gameOverScreen = document.getElementById('game-over-screen');
+        const finalScoreEl = document.getElementById('final-score');
+        const startBtn = document.getElementById('start-btn');
+        const retryBtn = document.getElementById('retry-btn');
+        const statusText = document.getElementById('status-text');
+
+        // --- Three.js ---
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.z = 5; 
+
+        const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+        const light = new THREE.DirectionalLight(0xffffff, 2);
+        light.position.set(0, 5, 5);
+        scene.add(light);
+        scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+
+        let blocks = [];
+        let particles = [];
+        
+        // Hand Cursor (Visual) - Big and flashy
+        const handGroup = new THREE.Group();
+        scene.add(handGroup);
+
+        // Core
+        const coreGeo = new THREE.IcosahedronGeometry(0.5, 1);
+        const coreMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true, transparent: true, opacity: 0.8 });
+        const coreMesh = new THREE.Mesh(coreGeo, coreMat);
+        handGroup.add(coreMesh);
+        
+        // Aura
+        const auraGeo = new THREE.SphereGeometry(0.8, 16, 16);
+        const auraMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.2 });
+        const auraMesh = new THREE.Mesh(auraGeo, auraMat);
+        handGroup.add(auraMesh);
+
+        handGroup.visible = false;
+
+        // --- MediaPipe ---
+        let handLandmarker = undefined;
+        let lastVideoTime = -1;
+
+        const setupMediaPipe = async () => {
+            const vision = await FilesetResolver.forVisionTasks(
+                "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
+            );
+            handLandmarker = await HandLandmarker.createFromOptions(vision, {
+                baseOptions: {
+                    modelAssetPath: `https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task`,
+                    delegate: "GPU"
+                },
+                runningMode: "VIDEO",
+                numHands: 1
+            });
+            statusText.innerText = "READY TO SMASH";
+            startBtn.classList.remove('hidden');
+        };
+        setupMediaPipe();
+
+        // --- Logic ---
+
+        function initGame() {
+            state = {
+                isPlaying: true, score: 0, level: 1, hitsInLevel: 0,
+                quota: GAME_CONFIG.baseQuota, timeLeft: GAME_CONFIG.baseTime, spawnTimer: 0
+            };
+            
+            blocks.forEach(b => scene.remove(b));
+            blocks = [];
+            
+            updateUI();
+            startScreen.classList.add('hidden');
+            gameOverScreen.classList.add('hidden');
+            uiLayer.classList.remove('hidden');
+            
+            if (videoElement.srcObject === null) {
+                startCamera();
+            }
+        }
+
+        async function startCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } } 
+                });
+                videoElement.srcObject = stream;
+                videoElement.addEventListener("loadeddata", loop);
+            } catch (err) {
+                alert("Camera permission denied");
+            }
+        }
+
+        function spawnBlock() {
+            const hue = Math.random(); 
+            const color = new THREE.Color().setHSL(hue, 1, 0.5);
+
+            const geometry = new THREE.BoxGeometry(1.2, 1.2, 1.2); // 大きく見やすく
+            const material = new THREE.MeshStandardMaterial({ 
+                color: color, roughness: 0.1, metalness: 0.5, emissive: color, emissiveIntensity: 0.4
+            });
+            
+            const block = new THREE.Mesh(geometry, material);
+            const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geometry), new THREE.LineBasicMaterial({ color: 0xffffff }));
+            block.add(edges);
+
+            // 画面中心付近に集まりやすく調整
+            block.position.set(
+                (Math.random() - 0.5) * 6, 
+                (Math.random() - 0.5) * 4, 
+                -12 // 奥から
+            );
+            
+            block.userData = { 
+                speed: 0.08 + (state.level * 0.02),
+                rot: { x: Math.random()*0.05, y: Math.random()*0.05 }
+            };
+
+            scene.add(block);
+            blocks.push(block);
+        }
+
+        function destroyBlock(block, index) {
+            // 派手なパーティクル
+            createParticles(block.position, block.material.color);
+            
+            scene.remove(block);
+            blocks.splice(index, 1);
+            
+            state.score += 100 * state.level;
+            state.hitsInLevel++;
+            
+            // 振動フィードバック
+            if (navigator.vibrate) navigator.vibrate(50);
+
+            // フラッシュ
+            const flash = document.getElementById('flash');
+            flash.style.opacity = 0.6;
+            setTimeout(() => flash.style.opacity = 0, 80);
+
+            if (state.hitsInLevel >= state.quota) levelUp();
+            updateUI();
+        }
+
+        function levelUp() {
+            state.level++;
+            state.hitsInLevel = 0;
+            state.quota += 3;
+            state.timeLeft = GAME_CONFIG.baseTime;
+            
+            centerMsg.innerText = "LEVEL " + state.level;
+            centerMsg.style.display = 'block';
+            setTimeout(() => { centerMsg.style.display = 'none'; }, 1000);
+        }
+
+        function createParticles(pos, color) {
+            for(let i=0; i<12; i++) {
+                const geo = new THREE.PlaneGeometry(0.3, 0.3);
+                const mat = new THREE.MeshBasicMaterial({ color: color, side: THREE.DoubleSide });
+                const mesh = new THREE.Mesh(geo, mat);
+                mesh.position.copy(pos);
+                // 手前に弾け飛ぶように
+                mesh.userData = {
+                    velocity: new THREE.Vector3(
+                        (Math.random()-0.5)*0.5, (Math.random()-0.5)*0.5, Math.random()*0.5
+                    ),
+                    life: 40
+                };
+                scene.add(mesh);
+                particles.push(mesh);
+            }
+        }
+
+        function updateUI() {
+            scoreEl.innerText = state.score;
+            levelEl.innerText = state.level;
+            quotaEl.innerText = state.quota - state.hitsInLevel;
+            const ratio = state.timeLeft / GAME_CONFIG.baseTime;
+            timerBar.style.width = (ratio * 100) + "%";
+            timerBar.style.background = ratio < 0.3 ? '#f00' : '#0f0';
+        }
+
+        // --- Loop ---
+        async function loop() {
+            if(videoElement.currentTime !== lastVideoTime) {
+                lastVideoTime = videoElement.currentTime;
+                const startTimeMs = performance.now();
+                if (handLandmarker) {
+                    const results = handLandmarker.detectForVideo(videoElement, startTimeMs);
+                    
+                    if(results.landmarks.length > 0) {
+                        const lm = results.landmarks[0];
+                        
+                        // 座標変換
+                        const x = (1 - lm[9].x) * 2 - 1; 
+                        const y = -(lm[9].y * 2 - 1);
+                        const handPos = new THREE.Vector3(x * 8, y * 5, 0); 
+                        
+                        handGroup.position.copy(handPos);
+                        handGroup.visible = true;
+
+                        // --- 簡易版グー判定 (Compactness) ---
+                        // 手首(0)と各指先(8,12,16,20)の平均距離を計算
+                        // 手の裏表に関係なく、握れば指先は手首に近づく
+                        const wrist = lm[0];
+                        const tips = [lm[8], lm[12], lm[16], lm[20]]; // 人差し指〜小指
+                        let totalDist = 0;
+                        tips.forEach(t => {
+                            totalDist += Math.hypot(t.x - wrist.x, t.y - wrist.y);
+                        });
+                        const avgDist = totalDist / 4;
+
+                        // 閾値: 値が小さいほど握っている (0.15~0.25あたりが目安)
+                        // かなり緩めに設定(0.35)
+                        const isFist = avgDist < 0.3; 
+                        
+                        // エフェクト切り替え
+                        if(isFist) {
+                            coreMat.color.setHex(0xff0000); // 赤
+                            auraMat.color.setHex(0xff0000);
+                            handGroup.scale.setScalar(1.5); // 巨大化
+                            handGroup.rotation.z += 0.2;    // 回転演出
+                        } else {
+                            coreMat.color.setHex(0x00ff00); // 緑
+                            auraMat.color.setHex(0x00ff00);
+                            handGroup.scale.setScalar(1.0);
+                        }
+
+                        // --- 拡大版 当たり判定 ---
+                        if(state.isPlaying && isFist) {
+                            for (let i = blocks.length - 1; i >= 0; i--) {
+                                const b = blocks[i];
+                                
+                                // 1. XY距離: 手のカーソルとブロックが重なっているか
+                                const distXY = handPos.distanceTo(new THREE.Vector3(b.position.x, b.position.y, 0));
+                                
+                                // 2. Z距離: ブロックが「ある程度近く(-4)」から「通り過ぎる直前(2)」の間にあるか
+                                // これにより、ジャストタイミングでなくても「構えていれば壊せる」ようになる
+                                const zCheck = b.position.z > -5 && b.position.z < 4;
+
+                                if (distXY < GAME_CONFIG.hitRange && zCheck) {
+                                    destroyBlock(b, i);
+                                }
+                            }
+                        }
+
+                    } else {
+                        handGroup.visible = false;
+                    }
+                }
+            }
+
+            if (state.isPlaying) {
+                state.timeLeft -= 1/60;
+                if (state.timeLeft <= 0) {
+                    state.isPlaying = false;
+                    finalScoreEl.innerText = state.score;
+                    uiLayer.classList.add('hidden');
+                    gameOverScreen.classList.remove('hidden');
+                }
+                
+                state.spawnTimer++;
+                const currentRate = Math.max(15, GAME_CONFIG.spawnRate - (state.level * 3));
+                if (state.spawnTimer > currentRate) {
+                    spawnBlock();
+                    state.spawnTimer = 0;
+                }
+                updateUI();
+            }
+
+            // Move blocks
+            for (let i = blocks.length - 1; i >= 0; i--) {
+                const b = blocks[i];
+                b.position.z += b.userData.speed; 
+                b.rotation.x += b.userData.rot.x;
+                b.rotation.y += b.userData.rot.y;
+
+                if (b.position.z > 6) {
+                    scene.remove(b);
+                    blocks.splice(i, 1);
+                }
+            }
+            
+            // Move particles
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.position.add(p.userData.velocity);
+                p.userData.life--;
+                p.scale.setScalar(p.userData.life / 40 * 0.3);
+                if(p.userData.life <= 0) {
+                    scene.remove(p);
+                    particles.splice(i, 1);
+                }
+            }
+
+            renderer.render(scene, camera);
+            requestAnimationFrame(loop);
+        }
+
+        startBtn.addEventListener('click', initGame);
+        retryBtn.addEventListener('click', initGame);
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
