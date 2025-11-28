@@ -130,6 +130,7 @@
         };
 
         const videoElement = document.getElementById('webcam');
+        const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
         const uiLayer = document.getElementById('ui-layer');
         const scoreEl = document.getElementById('score');
         const levelEl = document.getElementById('level');
@@ -221,15 +222,27 @@
         }
 
         async function startCamera() {
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } } 
-                });
-                videoElement.srcObject = stream;
-                videoElement.addEventListener("loadeddata", loop);
-            } catch (err) {
-                alert("Camera permission denied");
+            const preferredFacing = isMobile ? "environment" : "user";
+            const constraintsList = [
+                { video: { facingMode: { exact: preferredFacing }, width: { ideal: 1280 }, height: { ideal: 720 } } },
+                { video: { facingMode: preferredFacing, width: { ideal: 1280 }, height: { ideal: 720 } } },
+                { video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } } }
+            ];
+
+            let lastError;
+            for (const constraints of constraintsList) {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                    videoElement.srcObject = stream;
+                    videoElement.addEventListener("loadeddata", loop, { once: true });
+                    return;
+                } catch (err) {
+                    lastError = err;
+                }
             }
+
+            console.error(lastError);
+            alert("Camera permission denied");
         }
 
         function spawnBlock() {
