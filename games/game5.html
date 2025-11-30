@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>CYBER WING AR</title>
+    <style>
+        /* --- UI DESIGN --- */
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Courier New', Courier, monospace; }
+        
+        /* Camera Background */
+        #webcam {
+            position: fixed; top: 0; left: 0; min-width: 100%; min-height: 100%;
+            width: auto; height: auto; z-index: 1; object-fit: cover;
+            filter: brightness(0.7); /* 機体を目立たせるため少し暗く */
+        }
+
+        #canvas-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 2; }
+
+        /* HUD */
+        #ui-layer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none;
+            display: flex; flex-direction: column; justify-content: space-between;
+        }
+
+        .hud-header {
+            padding: 20px; display: flex; justify-content: space-between;
+            color: #0ff; text-shadow: 0 0 5px #0ff;
+        }
+        .score-display { font-size: 24px; font-weight: bold; }
+        .label { font-size: 10px; opacity: 0.7; color: #fff; display: block; }
+
+        /* Level Up Message */
+        .center-msg {
+            position: absolute; top: 30%; width: 100%; text-align: center;
+            font-size: 40px; font-weight: 900; font-style: italic;
+            color: #ff0; text-shadow: 2px 2px 0 #f00;
+            display: none; animation: fly-in 0.5s ease-out;
+        }
+        @keyframes fly-in { from { transform: scale(3); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+        /* Damage Effect */
+        #damage-flash {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(255, 0, 0, 0.5); opacity: 0; pointer-events: none; z-index: 5;
+            transition: opacity 0.1s;
+        }
+
+        /* Screens */
+        .screen {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 10, 20, 0.95); z-index: 100;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            color: #fff;
+        }
+
+        h1 {
+            font-size: 42px; line-height: 1; text-align: center; margin-bottom: 10px;
+            background: linear-gradient(45deg, #0ff, #f0f); -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+            font-style: italic; text-transform: uppercase;
+        }
+
+        .btn {
+            margin-top: 40px; padding: 16px 50px;
+            background: rgba(0, 255, 255, 0.1); border: 2px solid #0ff; color: #0ff;
+            font-size: 18px; font-weight: bold; cursor: pointer; pointer-events: auto;
+            clip-path: polygon(10% 0, 100% 0, 100% 70%, 90% 100%, 0 100%, 0 30%);
+            transition: all 0.2s; text-transform: uppercase; letter-spacing: 2px;
+        }
+        .btn:active { background: #0ff; color: #000; transform: scale(0.95); }
+
+        .hidden { display: none !important; }
+
+        /* Tilt Icon Animation */
+        .tilt-icon {
+            width: 60px; height: 10px; background: #666; border-radius: 5px; margin-top: 30px;
+            position: relative; animation: tilt 2s infinite ease-in-out;
+        }
+        .tilt-icon::before {
+            content: ''; position: absolute; left: 50%; top: -20px; width: 2px; height: 50px; background: #666;
+        }
+        @keyframes tilt { 0%, 100% { transform: rotate(0deg); } 25% { transform: rotate(20deg); } 75% { transform: rotate(-20deg); } }
+
+    </style>
+</head>
+<body>
+
+    <video id="webcam" autoplay playsinline muted></video>
+    <div id="damage-flash"></div>
+    <div id="canvas-container"></div>
+
+    <!-- UI -->
+    <div id="ui-layer" class="hidden">
+        <div class="hud-header">
+            <div>
+                <span class="label">FLIGHT TIME</span>
+                <span class="score-display" id="score">0.00</span>
+            </div>
+            <div style="text-align: right;">
+                <span class="label">SPEED LVL</span>
+                <span class="score-display" id="level">1</span>
+            </div>
+        </div>
+        <div class="center-msg" id="msg">MAX SPEED!!</div>
+    </div>
+
+    <!-- Start Screen -->
+    <div id="start-screen" class="screen">
+        <h1>CYBER<br>WING</h1>
+        <p>PILOT: READY</p>
+        <div class="tilt-icon"></div>
+        <p style="font-size: 12px; color: #888; margin-top: 20px;">TILT TO FLY</p>
+        <button id="perm-btn" class="btn">LAUNCH</button>
+    </div>
+
+    <!-- Game Over Screen -->
+    <div id="game-over-screen" class="screen hidden">
+        <h1 style="color: #f00; -webkit-text-fill-color: #f00;">DESTROYED</h1>
+        <p>RECORD: <span id="final-score">0.00</span> sec</p>
+        <button id="retry-btn" class="btn">REBOOT SYSTEM</button>
+    </div>
+
+    <!-- Libraries -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        // --- Config ---
+        const CONFIG = {
+            baseSpeed: 0.4,
+            maxSpeed: 1.2,
+            spawnRate: 35, // frames
+            shipSensitivity: 0.12,
+            maxBankAngle: 0.8 // 最大傾き (rad)
+        };
+
+        let state = {
+            playing: false,
+            time: 0,
+            level: 1,
+            speed: CONFIG.baseSpeed
+        };
+
+        let input = { x: 0, y: 0 }; // Gyro input
+
+        // --- DOM ---
+        const ui = document.getElementById('ui-layer');
+        const scoreEl = document.getElementById('score');
+        const levelEl = document.getElementById('level');
+        const msgEl = document.getElementById('msg');
+        const startScreen = document.getElementById('start-screen');
+        const gameOverScreen = document.getElementById('game-over-screen');
+        const flash = document.getElementById('damage-flash');
+        
+        // --- Three.js Setup ---
+        const scene = new THREE.Scene();
+        // Camera follows the ship
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(0, 1, 8); // カメラは少し後ろ上方
+
+        const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+        // Lights
+        const dirLight = new THREE.DirectionalLight(0xffffff, 2);
+        dirLight.position.set(5, 10, 5);
+        scene.add(dirLight);
+        scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+
+        // --- Objects ---
+        let ship;
+        let obstacles = [];
+        let particles = [];
+        let engineTrails = [];
+
+        // 1. Create Ship (自機)
+        function createShip() {
+            const group = new THREE.Group();
+
+            // Main Body
+            const bodyGeo = new THREE.ConeGeometry(0.5, 2, 4);
+            bodyGeo.rotateX(Math.PI / 2); // 寝かせる
+            const bodyMat = new THREE.MeshStandardMaterial({ 
+                color: 0x00ffff, roughness: 0.2, metalness: 0.8, emissive: 0x004444 
+            });
+            const body = new THREE.Mesh(bodyGeo, bodyMat);
+            group.add(body);
+
+            // Wings
+            const wingGeo = new THREE.BufferGeometry();
+            const wingVertices = new Float32Array([
+                0.5, 0, 0.5,   2.0, 0, 0.5,   0.5, 0, -0.5, // Right Wing
+                -0.5, 0, 0.5,  -2.0, 0, 0.5,  -0.5, 0, -0.5 // Left Wing
+            ]);
+            wingGeo.setAttribute('position', new THREE.BufferAttribute(wingVertices, 3));
+            const wingMat = new THREE.MeshBasicMaterial({ color: 0xff00ff, side: THREE.DoubleSide, wireframe: true });
+            const wings = new THREE.Mesh(wingGeo, wingMat);
+            group.add(wings);
+
+            // Engine Glow
+            const engineGeo = new THREE.SphereGeometry(0.2);
+            const engineMat = new THREE.MeshBasicMaterial({ color: 0x00ffff });
+            const engine = new THREE.Mesh(engineGeo, engineMat);
+            engine.position.set(0, 0, 1);
+            group.add(engine);
+
+            // Wireframe Outline for style
+            const edges = new THREE.LineSegments(
+                new THREE.EdgesGeometry(bodyGeo),
+                new THREE.LineBasicMaterial({ color: 0xffffff })
+            );
+            group.add(edges);
+
+            return group;
+        }
+
+        ship = createShip();
+        scene.add(ship);
+
+        // 2. Environment (Infinite Grid)
+        const grid = new THREE.GridHelper(60, 20, 0x00ffff, 0x111111);
+        grid.position.y = -5;
+        scene.add(grid);
+        const topGrid = new THREE.GridHelper(60, 20, 0xff00ff, 0x111111);
+        topGrid.position.y = 5;
+        scene.add(topGrid);
+
+        // --- Logic ---
+
+        const setupGyro = async () => {
+            if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                try {
+                    const permission = await DeviceOrientationEvent.requestPermission();
+                    if (permission === 'granted') {
+                        window.addEventListener('deviceorientation', handleOrientation);
+                        startGame();
+                    } else {
+                        alert("Permission Required to Fly");
+                    }
+                } catch (e) { startGame(); }
+            } else {
+                window.addEventListener('deviceorientation', handleOrientation);
+                startGame();
+            }
+        };
+
+        function handleOrientation(e) {
+            let x = e.gamma || 0; // Left/Right tilt
+            let y = e.beta || 0;  // Front/Back tilt
+
+            // Adjust Sensitivity
+            input.x = Math.max(-1, Math.min(1, x / 25)); 
+            input.y = Math.max(-1, Math.min(1, (y - 50) / 25)); // 50deg is neutral holding pos
+        }
+
+        function startGame() {
+            startCamera();
+            resetGame();
+            startScreen.classList.add('hidden');
+            ui.classList.remove('hidden');
+            gameOverScreen.classList.add('hidden');
+            loop();
+        }
+
+        async function startCamera() {
+            try {
+                const video = document.getElementById('webcam');
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "environment" } 
+                });
+                video.srcObject = stream;
+            } catch(e) {}
+        }
+
+        function resetGame() {
+            state.playing = true;
+            state.time = 0;
+            state.level = 1;
+            state.speed = CONFIG.baseSpeed;
+            ship.position.set(0, -2, 0); // Start position
+            ship.rotation.set(0, 0, 0);
+            
+            obstacles.forEach(o => scene.remove(o));
+            obstacles = [];
+        }
+
+        function spawnObstacle() {
+            const size = Math.random() * 2 + 1;
+            const geo = new THREE.BoxGeometry(size, size, size);
+            
+            // Neon Material
+            const color = Math.random() > 0.5 ? 0xff0000 : 0xffaa00;
+            const mat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.5 });
+            const mesh = new THREE.Mesh(geo, mat);
+
+            // Glowing Wireframe
+            const edges = new THREE.LineSegments(
+                new THREE.EdgesGeometry(geo),
+                new THREE.LineBasicMaterial({ color: color, linewidth: 2 })
+            );
+            mesh.add(edges);
+
+            // Position: Far away Z, Random X/Y
+            mesh.position.set(
+                (Math.random() - 0.5) * 14, // Spread X
+                (Math.random() - 0.5) * 8 - 2,  // Spread Y (centered slightly low)
+                -50 // Spawn distance
+            );
+
+            // Animation Data
+            mesh.userData = { 
+                rotSpeed: { x: Math.random()*0.1, y: Math.random()*0.1 } 
+            };
+
+            scene.add(mesh);
+            obstacles.push(mesh);
+        }
+
+        function createEngineTrail() {
+            // Simple particle behind ship
+            const geo = new THREE.PlaneGeometry(0.3, 0.3);
+            const mat = new THREE.MeshBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.8, side: THREE.DoubleSide });
+            const p = new THREE.Mesh(geo, mat);
+            
+            // Adjust spawn position relative to ship tilt
+            p.position.copy(ship.position);
+            p.position.z += 1.5; // Behind
+            p.position.x += (Math.random()-0.5)*0.2;
+            p.position.y += (Math.random()-0.5)*0.2;
+
+            p.rotation.z = Math.random() * Math.PI;
+            
+            scene.add(p);
+            engineTrails.push({ mesh: p, life: 10 });
+        }
+
+        function gameOver() {
+            state.playing = false;
+            document.getElementById('final-score').innerText = state.time.toFixed(2);
+            flash.style.opacity = 0.8;
+            setTimeout(() => flash.style.opacity = 0, 300);
+            ui.classList.add('hidden');
+            gameOverScreen.classList.remove('hidden');
+        }
+
+        // --- Main Loop ---
+        let frame = 0;
+        function loop() {
+            if (!state.playing) return;
+            frame++;
+
+            // 1. Ship Movement (Physics-like)
+            // 目標位置に向かってイージング（滑らかに）移動
+            const targetX = input.x * 6;
+            const targetY = -input.y * 4 - 1; // Y is inverted usually
+            
+            ship.position.x += (targetX - ship.position.x) * CONFIG.shipSensitivity;
+            ship.position.y += (targetY - ship.position.y) * CONFIG.shipSensitivity;
+
+            // Banking (Roll) Effect: X移動に合わせて機体を傾ける
+            // 目標ロール角
+            const targetRoll = -input.x * CONFIG.maxBankAngle;
+            ship.rotation.z += (targetRoll - ship.rotation.z) * 0.1;
+            
+            // Pitch (Up/Down) Effect
+            ship.rotation.x = input.y * 0.5;
+
+
+            // 2. Engine Trails
+            if (frame % 3 === 0) createEngineTrail();
+            for (let i = engineTrails.length - 1; i >= 0; i--) {
+                const t = engineTrails[i];
+                t.mesh.position.z += 0.5; // Trail moves away
+                t.mesh.scale.multiplyScalar(0.9);
+                t.mesh.material.opacity = t.life / 10;
+                t.life--;
+                if (t.life <= 0) {
+                    scene.remove(t.mesh);
+                    engineTrails.splice(i, 1);
+                }
+            }
+
+
+            // 3. Environment Movement
+            const speed = state.speed;
+            grid.position.z += speed;
+            if (grid.position.z > 5) grid.position.z = -5;
+            topGrid.position.z += speed;
+            if (topGrid.position.z > 5) topGrid.position.z = -5;
+
+
+            // 4. Obstacles
+            // Spawn
+            const currentSpawnRate = Math.max(10, CONFIG.spawnRate - (state.level * 2));
+            if (frame % Math.floor(currentSpawnRate) === 0) spawnObstacle();
+
+            // Move & Collide
+            const shipBox = new THREE.Box3().setFromObject(ship);
+            // 判定を少し小さくして遊びやすくする
+            shipBox.expandByScalar(-0.2); 
+
+            for (let i = obstacles.length - 1; i >= 0; i--) {
+                const ob = obstacles[i];
+                ob.position.z += speed;
+                ob.rotation.x += ob.userData.rotSpeed.x;
+                ob.rotation.y += ob.userData.rotSpeed.y;
+
+                // Collision
+                // Zが自機付近にある時だけBox判定（軽量化）
+                if (ob.position.z > -2 && ob.position.z < 2) {
+                    const obBox = new THREE.Box3().setFromObject(ob);
+                    if (shipBox.intersectsBox(obBox)) {
+                        gameOver();
+                    }
+                }
+
+                if (ob.position.z > 5) {
+                    scene.remove(ob);
+                    obstacles.splice(i, 1);
+                }
+            }
+
+
+            // 5. Game Stats
+            state.time += 1/60;
+            scoreEl.innerText = state.time.toFixed(2);
+            
+            // Level Up every 15 sec
+            if (state.time > state.level * 15) {
+                state.level++;
+                state.speed += 0.05;
+                levelEl.innerText = state.level;
+                msgEl.style.display = 'block';
+                msgEl.innerText = "SPEED UP LV." + state.level;
+                setTimeout(() => msgEl.style.display = 'none', 2000);
+            }
+
+            renderer.render(scene, camera);
+            requestAnimationFrame(loop);
+        }
+
+        // --- Events ---
+        document.getElementById('perm-btn').addEventListener('click', setupGyro);
+        document.getElementById('retry-btn').addEventListener('click', startGame);
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+    </script>
+</body>
+</html>
