@@ -37,7 +37,7 @@ jobs:
         uses: actions/upload-pages-artifact@v3
         with:
           # Publish only the static site files
-          path: './src'
+          path: './games'
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
