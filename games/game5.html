@@ -81,6 +81,17 @@
         }
         @keyframes tilt { 0%, 100% { transform: rotate(0deg); } 25% { transform: rotate(20deg); } 75% { transform: rotate(-20deg); } }
 
+        .back-btn {
+            position: fixed; top: 14px; left: 14px; z-index: 200;
+            padding: 10px 14px; border-radius: 12px;
+            background: rgba(0,0,0,0.6); color: #0ff;
+            border: 1px solid rgba(0,255,255,0.6);
+            text-decoration: none; font-weight: 700; letter-spacing: 1px;
+            box-shadow: 0 0 10px rgba(0,255,255,0.4);
+            pointer-events: auto;
+        }
+        .back-btn:hover { background: rgba(0,255,255,0.12); }
+
     </style>
 </head>
 <body>
@@ -88,6 +99,7 @@
     <video id="webcam" autoplay playsinline muted></video>
     <div id="damage-flash"></div>
     <div id="canvas-container"></div>
+    <a class="back-btn" href="../index.html">← HUB</a>
 
     <!-- UI -->
     <div id="ui-layer" class="hidden">
@@ -285,7 +297,7 @@
             state.time = 0;
             state.level = 1;
             state.speed = CONFIG.baseSpeed;
-            ship.position.set(0, -2, 0); // Start position
+            ship.position.set(0, 0, 0); // Start near center vertically
             ship.rotation.set(0, 0, 0);
             
             obstacles.forEach(o => scene.remove(o));
