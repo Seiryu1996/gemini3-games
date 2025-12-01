@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>NEON FLOW AR</title>
+    <style>
+        /* --- CHILL / CYBER AESTHETIC --- */
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Helvetica Neue', Arial, sans-serif; }
+        
+        #webcam {
+            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+            object-fit: cover; z-index: 1; transform: scaleX(-1); filter: brightness(0.6);
+        }
+        #canvas-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 2; }
+
+        .back-btn {
+            position: fixed; top: 14px; left: 14px; z-index: 200;
+            padding: 10px 14px; border-radius: 12px;
+            background: rgba(0,0,0,0.6); color: #0ff;
+            border: 1px solid rgba(0,255,255,0.6);
+            text-decoration: none; font-weight: 700; letter-spacing: 1px;
+            box-shadow: 0 0 10px rgba(0,255,255,0.35);
+            pointer-events: auto;
+        }
+        .back-btn:hover { background: rgba(0,255,255,0.12); }
+
+        /* UI Layer */
+        #ui-layer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none;
+            display: flex; flex-direction: column; justify-content: space-between;
+        }
+
+        .header {
+            padding: 20px; display: flex; justify-content: space-between; align-items: center;
+        }
+        
+        .score-board {
+            color: #fff; font-size: 24px; font-weight: bold;
+            text-shadow: 0 0 10px #f0f;
+            background: rgba(0,0,0,0.5); padding: 10px 20px; border-radius: 20px;
+            border: 1px solid #f0f;
+        }
+
+        .controls {
+            padding: 20px; text-align: center; pointer-events: auto;
+        }
+        
+        .btn {
+            background: transparent; border: 2px solid #0ff; color: #0ff;
+            padding: 10px 30px; font-size: 16px; border-radius: 30px;
+            cursor: pointer; text-transform: uppercase; letter-spacing: 2px;
+            background: rgba(0, 255, 255, 0.1); backdrop-filter: blur(5px);
+            transition: 0.2s;
+        }
+        .btn:active { background: #0ff; color: #000; }
+
+        #guide-text {
+            position: absolute; top: 50%; width: 100%; text-align: center;
+            color: rgba(255,255,255,0.7); font-size: 14px; letter-spacing: 1px;
+            pointer-events: none;
+        }
+
+        /* Loading Screen */
+        #loading {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: #111; z-index: 100; color: #0ff;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+        }
+        .loader {
+            width: 50px; height: 50px; border: 3px solid #333; border-top: 3px solid #0ff;
+            border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 20px;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        .hidden { display: none !important; }
+
+    </style>
+</head>
+<body>
+
+    <video id="webcam" autoplay playsinline muted></video>
+    <div id="canvas-container"></div>
+    <a class="back-btn" href="../index.html">← HUB</a>
+
+    <div id="ui-layer" class="hidden">
+        <div class="header">
+            <div class="score-board">GOAL: <span id="score">0</span></div>
+            <button class="btn" id="clear-btn">CLEAR LINES</button>
+        </div>
+        <div id="guide-text">PINCH TO DRAW LINES 🤏</div>
+        <div class="controls">
+            <!-- Buttons if needed -->
+        </div>
+    </div>
+
+    <div id="loading">
+        <div class="loader"></div>
+        <p>INITIALIZING PHYSICS...</p>
+        <button id="start-btn" class="btn hidden" style="margin-top:20px;">START CREATING</button>
+    </div>
+
+    <!-- Libraries -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "cannon-es": "https://unpkg.com/cannon-es@0.20.0/dist/cannon-es.js",
+                "@mediapipe/tasks-vision": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import * as CANNON from 'cannon-es';
+        import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision';
+
+        // --- Config ---
+        const CONFIG = {
+            ballSpawnInterval: 120, // Frames
+            gravity: -5,
+            drawThreshold: 0.1, // Distance to spawn new line segment
+            lineRadius: 0.3
+        };
+
+        let state = {
+            score: 0,
+            isDrawing: false,
+            lastDrawPos: null
+        };
+
+        // --- DOM ---
+        const scoreEl = document.getElementById('score');
+        const clearBtn = document.getElementById('clear-btn');
+        const startBtn = document.getElementById('start-btn');
+        const loading = document.getElementById('loading');
+        const guideText = document.getElementById('guide-text');
+        const uiLayer = document.getElementById('ui-layer');
+
+        // --- Three.js & Cannon.js Setup ---
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.z = 10; // 2.5D view
+
+        const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+        // Physics World
+        const world = new CANNON.World();
+        world.gravity.set(0, CONFIG.gravity, 0);
+
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+        scene.add(ambientLight);
+        const pointLight = new THREE.PointLight(0xff00ff, 2, 20);
+        pointLight.position.set(5, 5, 5);
+        scene.add(pointLight);
+
+        // --- Game Objects ---
+        const balls = []; // { mesh, body }
+        const lines = []; // { mesh, body }
+        let handCursor;
+        let goalArea;
+
+        // Materials
+        const ballMat = new THREE.MeshStandardMaterial({ color: 0xff00aa, emissive: 0x440022, roughness: 0.1 });
+        const lineMat = new THREE.MeshStandardMaterial({ color: 0x00ffff, emissive: 0x004444, roughness: 0.1 });
+        const cursorMat = new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true });
+        
+        // Physics Materials
+        const slipperyMat = new CANNON.Material('slippery');
+        const bounceMat = new CANNON.Material('bounce');
+        const contactMat = new CANNON.ContactMaterial(slipperyMat, bounceMat, {
+            friction: 0.1,
+            restitution: 0.7
+        });
+        world.addContactMaterial(contactMat);
+
+        // 1. Cursor
+        const cursorGeo = new THREE.SphereGeometry(0.2);
+        handCursor = new THREE.Mesh(cursorGeo, cursorMat);
+        scene.add(handCursor);
+        handCursor.visible = false;
+
+        // 2. Goal Area (Visual)
+        function createGoal() {
+            const geo = new THREE.BoxGeometry(4, 1, 1);
+            const mat = new THREE.MeshBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.3 });
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.position.set(0, -6, 0);
+            
+            // Neon Frame
+            const edges = new THREE.LineSegments(
+                new THREE.EdgesGeometry(geo),
+                new THREE.LineBasicMaterial({ color: 0x00ff00 })
+            );
+            mesh.add(edges);
+            
+            scene.add(mesh);
+            goalArea = mesh;
+        }
+        createGoal();
+
+        // --- Logic Functions ---
+
+        function spawnBall() {
+            const radius = 0.4;
+            // Visual
+            const mesh = new THREE.Mesh(new THREE.SphereGeometry(radius), ballMat);
+            scene.add(mesh);
+
+            // Physics
+            const body = new CANNON.Body({
+                mass: 1,
+                shape: new CANNON.Sphere(radius),
+                material: bounceMat
+            });
+            // Random X at top
+            body.position.set((Math.random() - 0.5) * 6, 8, 0);
+            world.addBody(body);
+
+            balls.push({ mesh, body });
+        }
+
+        // Draw Line Segment (Bubble style for smooth curves)
+        function addLinePoint(pos) {
+            const r = CONFIG.lineRadius;
+            
+            // Visual
+            const mesh = new THREE.Mesh(new THREE.SphereGeometry(r), lineMat);
+            mesh.position.copy(pos);
+            scene.add(mesh);
+
+            // Physics (Static Body)
+            const body = new CANNON.Body({
+                mass: 0, // Static
+                shape: new CANNON.Sphere(r),
+                material: slipperyMat
+            });
+            body.position.copy(pos);
+            world.addBody(body);
+
+            lines.push({ mesh, body });
+
+            // Effect: Little pop
+            mesh.scale.set(0,0,0);
+            mesh.userData = { targetScale: 1, scaleSpeed: 0.2 };
+        }
+
+        function clearLines() {
+            lines.forEach(l => {
+                scene.remove(l.mesh);
+                world.removeBody(l.body);
+            });
+            lines.length = 0;
+            state.score = 0;
+            scoreEl.innerText = 0;
+            
+            // Clear balls too for reset
+            balls.forEach(b => {
+                scene.remove(b.mesh);
+                world.removeBody(b.body);
+            });
+            balls.length = 0;
+        }
+
+        function checkGoal(ball, index) {
+            // Check if ball is inside goal area
+            // Goal Pos: 0, -6, 0 / Size: 4, 1, 1
+            const p = ball.body.position;
+            if (p.y < -5.5 && p.y > -6.5 && p.x > -2 && p.x < 2) {
+                // Scored!
+                createParticles(ball.mesh.position, 0x00ff00);
+                state.score++;
+                scoreEl.innerText = state.score;
+                
+                // Remove Ball
+                scene.remove(ball.mesh);
+                world.removeBody(ball.body);
+                balls.splice(index, 1);
+                return true;
+            }
+            return false;
+        }
+
+        function createParticles(pos, color) {
+            const geo = new THREE.BufferGeometry();
+            const count = 10;
+            const positions = new Float32Array(count * 3);
+            for(let i=0; i<count*3; i++) positions[i] = 0;
+            geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            
+            const mat = new THREE.PointsMaterial({ color: color, size: 0.5 });
+            const pts = new THREE.Points(geo, mat);
+            pts.position.copy(pos);
+            
+            // Animation data
+            const vels = [];
+            for(let i=0; i<count; i++) {
+                vels.push(new THREE.Vector3((Math.random()-0.5), Math.random(), (Math.random()-0.5)));
+            }
+            
+            scene.add(pts);
+            
+            // Simple animation loop closure
+            let life = 30;
+            function anim() {
+                if(life <= 0) { scene.remove(pts); return; }
+                const posArr = pts.geometry.attributes.position.array;
+                for(let i=0; i<count; i++) {
+                    posArr[i*3] += vels[i].x * 0.2;
+                    posArr[i*3+1] += vels[i].y * 0.2;
+                    posArr[i*3+2] += vels[i].z * 0.2;
+                }
+                pts.geometry.attributes.position.needsUpdate = true;
+                life--;
+                requestAnimationFrame(anim);
+            }
+            anim();
+        }
+
+        // --- MediaPipe ---
+        let handLandmarker;
+        let lastVideoTime = -1;
+        const videoElement = document.getElementById('webcam');
+
+        async function setupMediaPipe() {
+            const vision = await FilesetResolver.forVisionTasks(
+                "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
+            );
+            handLandmarker = await HandLandmarker.createFromOptions(vision, {
+                baseOptions: {
+                    modelAssetPath: `https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task`,
+                    delegate: "GPU"
+                },
+                runningMode: "VIDEO",
+                numHands: 1
+            });
+            document.querySelector('.loader').style.display = 'none';
+            document.querySelector('#loading p').style.display = 'none';
+            startBtn.classList.remove('hidden');
+        }
+        setupMediaPipe();
+
+        // --- Main Loop ---
+        async function startCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "user", width: 1280, height: 720 } 
+                });
+                videoElement.srcObject = stream;
+                await videoElement.play(); // ensure first frame is ready
+                loading.classList.add('hidden');
+                uiLayer.classList.remove('hidden');
+                loop();
+            } catch(e) { alert("Camera failed"); }
+        }
+
+        let frame = 0;
+
+        function loop() {
+            frame++;
+            world.step(1/60);
+
+            // 1. Hand Tracking
+            if (
+                handLandmarker &&
+                videoElement.readyState >= HTMLMediaElement.HAVE_ENOUGH_DATA &&
+                videoElement.videoWidth > 0 &&
+                videoElement.currentTime !== lastVideoTime
+            ) {
+                lastVideoTime = videoElement.currentTime;
+                const results = handLandmarker.detectForVideo(videoElement, performance.now());
+
+                if (results.landmarks.length > 0) {
+                    handCursor.visible = true;
+                    const lm = results.landmarks[0];
+                    
+                    // Coordinates (Flip X)
+                    // Z: Fixed drawing plane at 0
+                    const x = (1 - lm[8].x) * 2 - 1; // Index Tip
+                    const y = -(lm[8].y * 2 - 1);
+                    
+                    // Aspect correction (approx)
+                    const aspect = window.innerWidth / window.innerHeight;
+                    const viewWidth = 15 * aspect; // View frustum width at Z=0 (camera at Z=10)
+                    const viewHeight = 15;
+                    
+                    const drawPos = new THREE.Vector3(x * (viewWidth/2), y * (viewHeight/2), 0);
+                    handCursor.position.copy(drawPos);
+
+                    // Pinch Detection (Thumb tip[4] vs Index tip[8])
+                    const dist = Math.hypot(lm[4].x - lm[8].x, lm[4].y - lm[8].y);
+                    const isPinching = dist < 0.05;
+
+                    if (isPinching) {
+                        handCursor.material.color.setHex(0x00ffff); // Cyan
+                        guideText.style.opacity = 0; // Hide guide once started
+                        
+                        // Draw logic
+                        if (!state.isDrawing) {
+                            state.isDrawing = true;
+                            state.lastDrawPos = drawPos.clone();
+                            addLinePoint(drawPos); // Start point
+                        } else {
+                            // Check distance
+                            if (state.lastDrawPos.distanceTo(drawPos) > CONFIG.drawThreshold) {
+                                addLinePoint(drawPos);
+                                state.lastDrawPos = drawPos.clone();
+                            }
+                        }
+                    } else {
+                        handCursor.material.color.setHex(0xffffff);
+                        state.isDrawing = false;
+                    }
+
+                } else {
+                    handCursor.visible = false;
+                }
+            }
+
+            // 2. Ball Spawner
+            if (frame % CONFIG.ballSpawnInterval === 0) {
+                spawnBall();
+            }
+
+            // 3. Update Physics Objects
+            for (let i = balls.length - 1; i >= 0; i--) {
+                const b = balls[i];
+                b.mesh.position.copy(b.body.position);
+                b.mesh.quaternion.copy(b.body.quaternion);
+
+                // Check Goal
+                if (checkGoal(b, i)) continue;
+
+                // Remove if falls too far
+                if (b.mesh.position.y < -10) {
+                    scene.remove(b.mesh);
+                    world.removeBody(b.body);
+                    balls.splice(i, 1);
+                }
+            }
+
+            // Animate Lines appearance
+            lines.forEach(l => {
+                if(l.mesh.userData.scaleSpeed) {
+                    const s = l.mesh.scale.x + l.mesh.userData.scaleSpeed;
+                    if(s < 1) l.mesh.scale.set(s,s,s);
+                    else {
+                        l.mesh.scale.set(1,1,1);
+                        delete l.mesh.userData.scaleSpeed;
+                    }
+                }
+            });
+
+            renderer.render(scene, camera);
+            requestAnimationFrame(loop);
+        }
+
+        startBtn.addEventListener('click', startCamera);
+        clearBtn.addEventListener('click', clearLines);
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
