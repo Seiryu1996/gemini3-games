@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>NEON POSER AR</title>
+    <style>
+        /* --- TIKTOK / RHYTHM GAME STYLE --- */
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Arial Black', sans-serif; }
+
+        #webcam {
+            position: fixed; top: 0; left: 0; min-width: 100%; min-height: 100%;
+            width: auto; height: auto; z-index: 1; object-fit: cover; transform: scaleX(-1); /* 鏡のように反転 */
+            filter: brightness(0.7);
+        }
+
+        #canvas-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 2; }
+
+        .back-btn {
+            position: fixed; top: 14px; left: 14px; z-index: 200;
+            padding: 10px 14px; border-radius: 12px;
+            background: rgba(0,0,0,0.65); color: #0ff;
+            border: 1px solid rgba(0,255,255,0.6);
+            text-decoration: none; font-weight: 700; letter-spacing: 1px;
+            box-shadow: 0 0 10px rgba(0,255,255,0.35);
+            pointer-events: auto;
+        }
+        .back-btn:hover { background: rgba(0,255,255,0.12); }
+
+        /* HUD */
+        #ui-layer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none;
+            display: flex; flex-direction: column; justify-content: space-between;
+        }
+
+        .top-hud {
+            padding: 20px; display: flex; justify-content: space-between; align-items: flex-end;
+            text-transform: uppercase;
+        }
+        
+        .score-box {
+            font-size: 40px; color: #fff; text-shadow: 3px 3px 0 #f0f;
+            line-height: 1;
+        }
+        .combo-box {
+            font-size: 24px; color: #ff0; text-shadow: 2px 2px 0 #f00;
+            text-align: right; transform: rotate(-5deg);
+        }
+
+        /* Pose Feedback */
+        #pose-feedback {
+            position: absolute; top: 20%; width: 100%; text-align: center;
+            font-size: 60px; color: #0f0; text-shadow: 0 0 20px #0f0;
+            font-style: italic; opacity: 0; transform: scale(0.5);
+            transition: transform 0.1s;
+        }
+        .perfect { color: #0ff !important; text-shadow: 0 0 20px #0ff !important; }
+        .miss { color: #f00 !important; text-shadow: 0 0 20px #f00 !important; }
+
+        /* Loading */
+        #loading {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: #000; color: #0ff; z-index: 100;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+        }
+        .spinner {
+            width: 40px; height: 40px; border: 4px solid #333; border-top: 4px solid #f0f;
+            border-radius: 50%; animation: spin 1s infinite linear; margin-bottom: 20px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Start Screen */
+        .screen {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.85); z-index: 90;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            color: white; text-align: center;
+        }
+        .btn {
+            margin-top: 30px; padding: 20px 60px; font-size: 24px; font-weight: bold;
+            background: #f0f; border: none; color: #fff; cursor: pointer;
+            box-shadow: 0 0 20px #f0f; pointer-events: auto;
+            transform: skew(-10deg);
+        }
+        .btn:active { transform: skew(-10deg) scale(0.95); }
+        .hidden { display: none !important; }
+
+        h1 {
+            font-size: 50px; margin: 0;
+            background: linear-gradient(to right, #0ff, #f0f);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        }
+
+    </style>
+</head>
+<body>
+
+    <video id="webcam" autoplay playsinline muted></video>
+    <div id="canvas-container"></div>
+    <a class="back-btn" href="../index.html">← HUB</a>
+
+    <div id="ui-layer" class="hidden">
+        <div class="top-hud">
+            <div class="score-box"><span id="score">0</span></div>
+            <div class="combo-box">COMBO <span id="combo">0</span></div>
+        </div>
+        <div id="pose-feedback">PERFECT!</div>
+    </div>
+
+    <div id="loading">
+        <div class="spinner"></div>
+        <p>LOADING BODY TRACKER...</p>
+    </div>
+
+    <div id="start-screen" class="screen hidden">
+        <h1>NEON<br>POSER</h1>
+        <p style="margin-top: 20px; font-size: 14px; max-width: 80%;">
+            STAND BACK & SHOW YOUR UPPER BODY<br>
+            MATCH THE POSES!
+        </p>
+        <button id="start-btn" class="btn">PLAY</button>
+    </div>
+
+    <div id="game-over-screen" class="screen hidden">
+        <h1 style="color: #f00;">GAME OVER</h1>
+        <p>SCORE: <span id="final-score">0</span></p>
+        <button id="retry-btn" class="btn">RETRY</button>
+    </div>
+
+    <!-- Libraries -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "@mediapipe/tasks-vision": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { FilesetResolver, PoseLandmarker } from '@mediapipe/tasks-vision';
+
+        // --- Config ---
+        const CONFIG = {
+            spawnRate: 150, // frames
+            speedBase: 0.1,
+            speedMax: 0.3,
+            hitZ: 1.5, // 判定を行うZ位置
+            startZ: -20
+        };
+
+        const POSES = {
+            IDLE: 0,
+            HANDS_UP: 1, // バンザイ
+            T_POSE: 2,   // T字
+            CROSS: 3     // 胸の前でクロス
+        };
+
+        let state = {
+            playing: false,
+            score: 0,
+            combo: 0,
+            currentPose: POSES.IDLE,
+            speed: CONFIG.speedBase
+        };
+
+        // --- DOM ---
+        const videoElement = document.getElementById('webcam');
+        const uiLayer = document.getElementById('ui-layer');
+        const scoreEl = document.getElementById('score');
+        const comboEl = document.getElementById('combo');
+        const feedbackEl = document.getElementById('pose-feedback');
+        const startScreen = document.getElementById('start-screen');
+        const loadingScreen = document.getElementById('loading');
+        const gameOverScreen = document.getElementById('game-over-screen');
+
+        // --- Three.js ---
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(0, 1, 5);
+
+        const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+        // Lighting
+        scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+        const dLight = new THREE.DirectionalLight(0xff00ff, 2);
+        dLight.position.set(0, 5, 5);
+        scene.add(dLight);
+
+        // Tunnel Effect
+        const grid = new THREE.GridHelper(50, 20, 0x00ffff, 0x000000);
+        grid.position.y = -2;
+        scene.add(grid);
+
+        // Objects
+        let walls = [];
+        let skeletonGroup = new THREE.Group();
+        scene.add(skeletonGroup);
+        
+        // Setup Skeleton Visuals (Simple lines)
+        const boneMat = new THREE.LineBasicMaterial({ color: 0x00ff00, linewidth: 3 });
+        const joints = [];
+        // Create lines for arms and shoulders
+        for(let i=0; i<4; i++) { // L-Arm, R-Arm, Shoulders, Body
+            const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,0)]);
+            const line = new THREE.Line(geo, boneMat);
+            skeletonGroup.add(line);
+            joints.push(line);
+        }
+
+        // --- MediaPipe Pose ---
+        let poseLandmarker;
+        let lastVideoTime = -1;
+
+        async function setupMediaPipe() {
+            const vision = await FilesetResolver.forVisionTasks(
+                "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
+            );
+            poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+                baseOptions: {
+                    modelAssetPath: `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task`,
+                    delegate: "GPU"
+                },
+                runningMode: "VIDEO",
+                numPoses: 1
+            });
+            loadingScreen.classList.add('hidden');
+            startScreen.classList.remove('hidden');
+        }
+        setupMediaPipe();
+
+        // --- Logic ---
+
+        function startGame() {
+            state = { playing: true, score: 0, combo: 0, currentPose: POSES.IDLE, speed: CONFIG.speedBase };
+            walls.forEach(w => scene.remove(w));
+            walls = [];
+            scoreEl.innerText = "0";
+            comboEl.innerText = "0";
+            
+            startScreen.classList.add('hidden');
+            gameOverScreen.classList.add('hidden');
+            uiLayer.classList.remove('hidden');
+
+            startCamera();
+        }
+
+        async function startCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "user", width: 1280, height: 720 } 
+                });
+                videoElement.srcObject = stream;
+                await videoElement.play(); // ensure first frame is ready
+                loop();
+            } catch(e) { alert("Camera Error"); }
+        }
+
+        // Create Wall with a Pose shape cutout (Visualized as glowing shapes)
+        function spawnWall() {
+            const type = Math.floor(Math.random() * 3) + 1; // 1, 2, 3
+            
+            // Wall container
+            const group = new THREE.Group();
+            group.position.set(0, 1, CONFIG.startZ);
+            
+            // 1. The Glass Panel (Transparent)
+            const panelGeo = new THREE.BoxGeometry(6, 4, 0.1);
+            const panelMat = new THREE.MeshBasicMaterial({ color: 0x001133, transparent: true, opacity: 0.8 });
+            const panel = new THREE.Mesh(panelGeo, panelMat);
+            group.add(panel);
+
+            // 2. The Neon Shape (Instruction)
+            let shapePoints = [];
+            let color = 0xffffff;
+            let label = "";
+
+            if (type === POSES.HANDS_UP) { // U shape
+                shapePoints = [new THREE.Vector3(-1,0,0), new THREE.Vector3(-1,1.5,0), new THREE.Vector3(1,1.5,0), new THREE.Vector3(1,0,0)];
+                color = 0x00ffff; // Cyan
+                label = "HANDS UP!";
+            } else if (type === POSES.T_POSE) { // T shape
+                shapePoints = [new THREE.Vector3(-1.5,0.5,0), new THREE.Vector3(1.5,0.5,0)]; // Horizontal
+                const v = [new THREE.Vector3(0,-1,0), new THREE.Vector3(0,0.5,0)]; // Vertical
+                const lineV = new THREE.Line(new THREE.BufferGeometry().setFromPoints(v), new THREE.LineBasicMaterial({ color: 0xff00ff, linewidth: 5 }));
+                group.add(lineV);
+                color = 0xff00ff; // Magenta
+                label = "T-POSE";
+            } else if (type === POSES.CROSS) { // X shape
+                shapePoints = [new THREE.Vector3(-1,1,0), new THREE.Vector3(1,-1,0)];
+                const line2 = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(1,1,0), new THREE.Vector3(-1,-1,0)]), new THREE.LineBasicMaterial({ color: 0xffff00, linewidth: 5 }));
+                group.add(line2);
+                color = 0xffff00; // Yellow
+                label = "CROSS ARMS";
+            }
+
+            const shapeGeo = new THREE.BufferGeometry().setFromPoints(shapePoints);
+            const shapeMat = new THREE.LineBasicMaterial({ color: color, linewidth: 5 });
+            const shapeLine = new THREE.Line(shapeGeo, shapeMat);
+            group.add(shapeLine);
+
+            // Add Label Text (Simple Plane with canvas texture is heavy, use color coding for now)
+            // Or simple mesh arrangement. Let's stick to neon shapes.
+
+            group.userData = { type: type, passed: false };
+            scene.add(group);
+            walls.push(group);
+        }
+
+        // Analyze user pose
+        function analyzePose(landmarks) {
+            // landmarks: 11=L_Shoulder, 12=R_Shoulder, 15=L_Wrist, 16=R_Wrist
+            const ls = landmarks[11];
+            const rs = landmarks[12];
+            const lw = landmarks[15];
+            const rw = landmarks[16];
+            const nose = landmarks[0];
+
+            // Y is inverted in 3D projection usually? No, MediaPipe Y: 0(top) -> 1(bottom).
+            // So smaller Y is higher.
+
+            // 1. HANDS UP: Wrists higher than Nose
+            if (lw.y < nose.y && rw.y < nose.y) return POSES.HANDS_UP;
+
+            // 2. CROSS: Wrists are horizontally close (crossed)
+            if (Math.abs(lw.x - rw.x) < 0.15) return POSES.CROSS;
+
+            // 3. T-POSE: Wrists roughly same Y as Shoulders, and far apart X
+            const armSpan = Math.abs(lw.x - rw.x);
+            const shoulderY = (ls.y + rs.y) / 2;
+            const wristY = (lw.y + rw.y) / 2;
+            if (armSpan > 0.5 && Math.abs(wristY - shoulderY) < 0.2) return POSES.T_POSE;
+
+            return POSES.IDLE;
+        }
+
+        function showFeedback(text, isGood) {
+            feedbackEl.innerText = text;
+            feedbackEl.className = isGood ? 'perfect' : 'miss';
+            feedbackEl.style.opacity = 1;
+            feedbackEl.style.transform = 'scale(1.2)';
+            setTimeout(() => {
+                feedbackEl.style.opacity = 0;
+                feedbackEl.style.transform = 'scale(0.5)';
+            }, 500);
+        }
+
+        function gameOver() {
+            state.playing = false;
+            document.getElementById('final-score').innerText = state.score;
+            uiLayer.classList.add('hidden');
+            gameOverScreen.classList.remove('hidden');
+        }
+
+        // Main Loop
+        let frame = 0;
+        async function loop() {
+            if (!state.playing) {
+                requestAnimationFrame(loop);
+                return;
+            }
+            frame++;
+
+            // 1. MediaPipe Tracking
+            if (
+                poseLandmarker &&
+                videoElement.readyState >= HTMLMediaElement.HAVE_ENOUGH_DATA &&
+                videoElement.videoWidth > 0 &&
+                videoElement.currentTime !== lastVideoTime
+            ) {
+                lastVideoTime = videoElement.currentTime;
+                try {
+                    const results = poseLandmarker.detectForVideo(videoElement, performance.now());
+                    
+                    if (results.landmarks.length > 0) {
+                        const lm = results.landmarks[0];
+                        state.currentPose = analyzePose(lm);
+
+                        // Update Skeleton Visuals
+                        // Map MediaPipe (0-1) to Three.js World
+                        const mapPos = (idx) => new THREE.Vector3((0.5 - lm[idx].x) * 4, -(lm[idx].y - 0.5) * 3, 0);
+                        
+                        // Body Lines
+                        const setLine = (lineObj, idx1, idx2) => {
+                            const pos = lineObj.geometry.attributes.position;
+                            const p1 = mapPos(idx1);
+                            const p2 = mapPos(idx2);
+                            pos.setXYZ(0, p1.x, p1.y, p1.z);
+                            pos.setXYZ(1, p2.x, p2.y, p2.z);
+                            pos.needsUpdate = true;
+                        };
+
+                        setLine(joints[0], 11, 15); // L Arm
+                        setLine(joints[1], 12, 16); // R Arm
+                        setLine(joints[2], 11, 12); // Shoulders
+                        setLine(joints[3], 11, 23); // Torso Side L (Approx)
+
+                        // Change color based on current detected pose
+                        const color = state.currentPose !== POSES.IDLE ? 0xffff00 : 0x00ff00;
+                        joints.forEach(j => j.material.color.setHex(color));
+                    }
+                } catch(err) {
+                    console.warn("Pose detect skipped:", err);
+                }
+            }
+
+            // 2. Game Logic (Walls)
+            if (frame % Math.floor(CONFIG.spawnRate / (1 + state.score * 0.05)) === 0) {
+                spawnWall();
+            }
+
+            for (let i = walls.length - 1; i >= 0; i--) {
+                const w = walls[i];
+                w.position.z += state.speed;
+
+                // Hit Detection Zone
+                if (w.position.z > CONFIG.hitZ && !w.userData.passed) {
+                    if (w.position.z < CONFIG.hitZ + 1.0) { // Slight window
+                        const required = w.userData.type;
+                        
+                        if (state.currentPose === required) {
+                            // SUCCESS
+                            w.userData.passed = true;
+                            state.score += 100 + (state.combo * 10);
+                            state.combo++;
+                            state.speed = Math.min(CONFIG.speedMax, state.speed + 0.005); // Speed up
+                            
+                            scoreEl.innerText = state.score;
+                            comboEl.innerText = state.combo;
+                            
+                            // Effect: Break Wall
+                            w.visible = false; // Hide wall
+                            showFeedback("PERFECT!", true);
+                            
+                        } else {
+                            // FAIL (Check if it passed too far without hit)
+                             if (w.position.z > CONFIG.hitZ + 0.5) {
+                                w.userData.passed = true;
+                                state.combo = 0;
+                                comboEl.innerText = 0;
+                                showFeedback("MISS...", false);
+                                
+                                // Red Flash
+                                document.body.style.backgroundColor = "#500";
+                                setTimeout(() => document.body.style.backgroundColor = "#000", 100);
+                                
+                                // Optional: Game Over on miss? Or just score penalty?
+                                // Let's simplify: 3 Misses = Game Over? 
+                                // For now, Score based.
+                             }
+                        }
+                    }
+                }
+
+                if (w.position.z > 5) {
+                    scene.remove(w);
+                    walls.splice(i, 1);
+                }
+            }
+            
+            // Move Grid
+            grid.position.z += state.speed;
+            if(grid.position.z > 0) grid.position.z = -2;
+
+            renderer.render(scene, camera);
+            requestAnimationFrame(loop);
+        }
+
+        // Events
+        document.getElementById('start-btn').addEventListener('click', startGame);
+        document.getElementById('retry-btn').addEventListener('click', startGame);
+        
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
