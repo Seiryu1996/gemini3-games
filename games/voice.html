@@ -65,6 +65,17 @@
             box-shadow: 0 0 10px #007bff;
         }
 
+        .back-btn {
+            position: fixed; top: 14px; left: 14px; z-index: 200;
+            padding: 10px 14px; border-radius: 12px;
+            background: rgba(0,0,0,0.65); color: #0ff;
+            border: 1px solid rgba(0,255,255,0.6);
+            text-decoration: none; font-weight: 700; letter-spacing: 1px;
+            box-shadow: 0 0 10px rgba(0,255,255,0.35);
+            pointer-events: auto;
+        }
+        .back-btn:hover { background: rgba(0,255,255,0.12); }
+
         #visualizer {
             width: 100%;
             max-width: 600px;
@@ -77,6 +88,7 @@
 </head>
 <body>
 
+    <a class="back-btn" href="../index.html">← HUB</a>
     <h1>🎙️ ボイスチェンジャー</h1>
     <div class="warning">
         ⚠ ハウリング防止のため、必ずヘッドホン/イヤホンを使用してください。
