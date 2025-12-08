@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>リアルタイム・ボイスチェンジャー</title>
+    <!-- Tone.js ライブラリの読み込み -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <style>
+        body {
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            background-color: #222;
+            color: #fff;
+            text-align: center;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+        h1 { margin-bottom: 10px; }
+        .warning {
+            color: #ff4444;
+            background: #ffe6e6;
+            padding: 10px;
+            border-radius: 5px;
+            display: inline-block;
+            margin-bottom: 20px;
+            font-weight: bold;
+            color: #d8000c;
+        }
+        .controls { margin-bottom: 30px; }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+            transition: 0.2s;
+        }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        
+        #btn-start { background-color: #28a745; color: white; }
+        #btn-stop { background-color: #dc3545; color: white; display: none; }
+        
+        .voice-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 15px;
+            width: 100%;
+            max-width: 600px;
+        }
+        
+        .voice-btn {
+            background-color: #444;
+            color: white;
+            padding: 15px;
+            border: 2px solid transparent;
+        }
+        .voice-btn:hover { background-color: #555; }
+        .voice-btn.active {
+            border-color: #007bff;
+            background-color: #0056b3;
+            box-shadow: 0 0 10px #007bff;
+        }
+
+        #visualizer {
+            width: 100%;
+            max-width: 600px;
+            height: 60px;
+            background: #000;
+            margin-top: 20px;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>🎙️ ボイスチェンジャー</h1>
+    <div class="warning">
+        ⚠ ハウリング防止のため、必ずヘッドホン/イヤホンを使用してください。
+    </div>
+
+    <div class="controls">
+        <button id="btn-start">マイクをオンにする</button>
+        <button id="btn-stop">停止</button>
+    </div>
+
+    <div class="voice-grid" id="voice-selector">
+        <button class="voice-btn active" data-type="normal">ノーマル</button>
+        <button class="voice-btn" data-type="chipmunk">リス（高音）</button>
+        <button class="voice-btn" data-type="monster">モンスター（低音）</button>
+        <button class="voice-btn" data-type="robot">ロボット</button>
+        <button class="voice-btn" data-type="vibrato">宇宙人</button>
+        <button class="voice-btn" data-type="echo">洞窟（エコー）</button>
+        <button class="voice-btn" data-type="radio">無線機</button>
+    </div>
+
+    <canvas id="visualizer"></canvas>
+
+    <script>
+        // 変数の初期化
+        let mic;
+        let activeEffect = null;
+        let currentVoice = 'normal';
+        let isRunning = false;
+        let analyser;
+        
+        const btnStart = document.getElementById('btn-start');
+        const btnStop = document.getElementById('btn-stop');
+        const voiceBtns = document.querySelectorAll('.voice-btn');
+        const canvas = document.getElementById('visualizer');
+        const canvasCtx = canvas.getContext('2d');
+
+        // マイク開始処理
+        btnStart.addEventListener('click', async () => {
+            try {
+                // AudioContextの開始（ブラウザのポリシー対応）
+                await Tone.start();
+                
+                // マイク入力の作成
+                mic = new Tone.UserMedia();
+                
+                // ビジュアライザー用
+                analyser = new Tone.Analyser("waveform", 256);
+
+                await mic.open();
+                
+                // エフェクトの適用
+                applyEffect(currentVoice);
+
+                // UI更新
+                isRunning = true;
+                btnStart.style.display = 'none';
+                btnStop.style.display = 'inline-block';
+                drawVisualizer();
+                
+            } catch (err) {
+                console.error(err);
+                alert("マイクのアクセスに失敗しました。設定を確認してください。");
+            }
+        });
+
+        // マイク停止処理
+        btnStop.addEventListener('click', () => {
+            if (mic) {
+                mic.close();
+                mic.dispose(); // メモリ解放
+            }
+            if (activeEffect) {
+                activeEffect.dispose();
+                activeEffect = null;
+            }
+            isRunning = false;
+            btnStart.style.display = 'inline-block';
+            btnStop.style.display = 'none';
+            // 画面クリア
+            canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
+        });
+
+        // ボイス選択ボタンの処理
+        voiceBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                // UIのアクティブ切り替え
+                voiceBtns.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+
+                currentVoice = btn.getAttribute('data-type');
+                
+                if (isRunning) {
+                    applyEffect(currentVoice);
+                }
+            });
+        });
+
+        // エフェクトを適用する関数
+        function applyEffect(type) {
+            // 既存のエフェクトがあれば破棄
+            if (activeEffect) {
+                mic.disconnect();
+                activeEffect.dispose();
+                activeEffect = null;
+            }
+
+            // マイク入力を解析機につなぐ（常に波形を表示するため）
+            mic.connect(analyser);
+
+            switch (type) {
+                case 'normal':
+                    // そのまま出力
+                    mic.toDestination();
+                    break;
+
+                case 'chipmunk':
+                    // ピッチシフト（+6セミトーン）
+                    activeEffect = new Tone.PitchShift(6).toDestination();
+                    mic.connect(activeEffect);
+                    break;
+
+                case 'monster':
+                    // ピッチシフト（-6セミトーン）
+                    activeEffect = new Tone.PitchShift(-6).toDestination();
+                    mic.connect(activeEffect);
+                    break;
+
+                case 'robot':
+                    // リングモジュレーター（金属的な音）
+                    // distortion: 歪み, frequency: 周波数
+                    activeEffect = new Tone.Chebyshev(50).toDestination();
+                    const ringMod = new Tone.FrequencyShifter(100).connect(activeEffect);
+                    mic.connect(ringMod);
+                    // 複数のノードを使うためactiveEffectを配列かグループで管理すべきだが簡易的に処理
+                    activeEffect = ringMod; 
+                    break;
+
+                case 'vibrato':
+                    // トレモロ（音が揺れる）
+                    activeEffect = new Tone.Vibrato(10, 0.5).toDestination();
+                    mic.connect(activeEffect);
+                    break;
+
+                case 'echo':
+                    // フィードバックディレイ
+                    activeEffect = new Tone.FeedbackDelay("8n", 0.5).toDestination();
+                    mic.connect(activeEffect);
+                    break;
+                
+                case 'radio':
+                    // ビットクラッシャー（解像度を下げてノイズっぽく）+ EQ
+                    const bitCrusher = new Tone.BitCrusher(4);
+                    const eq = new Tone.EQ3({ high: -10, mid: 0, low: -20 });
+                    bitCrusher.connect(eq);
+                    eq.toDestination();
+                    mic.connect(bitCrusher);
+                    activeEffect = bitCrusher; // 簡易管理
+                    break;
+            }
+        }
+
+        // 波形描画ループ
+        function drawVisualizer() {
+            if (!isRunning) return;
+
+            requestAnimationFrame(drawVisualizer);
+
+            const buffer = analyser.getValue();
+            canvasCtx.fillStyle = '#000';
+            canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+
+            canvasCtx.lineWidth = 2;
+            canvasCtx.strokeStyle = '#00ff00';
+            canvasCtx.beginPath();
+
+            const sliceWidth = canvas.width / buffer.length;
+            let x = 0;
+
+            for (let i = 0; i < buffer.length; i++) {
+                const v = buffer[i] * 0.5 + 0.5; // 正規化
+                const y = v * canvas.height;
+
+                if (i === 0) {
+                    canvasCtx.moveTo(x, y);
+                } else {
+                    canvasCtx.lineTo(x, y);
+                }
+
+                x += sliceWidth;
+            }
+
+            canvasCtx.lineTo(canvas.width, canvas.height / 2);
+            canvasCtx.stroke();
+        }
+    </script>
+</body>
+</html>
