@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>バランスゲーム</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #222;
+            color: white;
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        h1 {
+            margin-top: 0;
+            font-size: 24px;
+            color: #eee;
+        }
+
+        #gameContainer {
+            position: relative;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+        }
+
+        canvas {
+            background-color: #333;
+            border-radius: 4px;
+            cursor: crosshair;
+            display: block;
+        }
+
+        #uiLayer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none; /* UIの下のCanvasをクリック可能にする */
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        #startScreen, #gameOverScreen {
+            background: rgba(0, 0, 0, 0.7);
+            padding: 20px;
+            border-radius: 8px;
+            pointer-events: auto; /* ボタンを押せるようにする */
+        }
+
+        button {
+            background: #ff4757;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            font-size: 18px;
+            cursor: pointer;
+            border-radius: 4px;
+            margin-top: 10px;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background: #ff6b81;
+        }
+
+        /* 戻るボタン（他ファイルと統一） */
+        .back-btn {
+            position: fixed;
+            top: 14px;
+            left: 14px;
+            z-index: 200;
+            padding: 10px 14px;
+            border-radius: 12px;
+            background: rgba(0,0,0,0.6);
+            color: #0ff;
+            border: 1px solid rgba(0,255,255,0.6);
+            text-decoration: none;
+            font-weight: 700;
+            letter-spacing: 1px;
+            box-shadow: 0 0 10px rgba(0,255,255,0.4);
+            pointer-events: auto;
+        }
+        .back-btn:hover { background: rgba(0,255,255,0.12); }
+
+        #scoreBoard {
+            position: absolute;
+            top: 10px;
+            right: 20px;
+            font-size: 20px;
+            font-weight: bold;
+            color: #fff;
+        }
+        
+        p.instruction {
+            font-size: 14px;
+            color: #ccc;
+        }
+    </style>
+</head>
+<body>
+
+    <a class="back-btn" href="../index.html">← HUB</a>
+
+    <h1>THE BALANCE</h1>
+
+    <div id="gameContainer">
+        <canvas id="gameCanvas" width="800" height="500"></canvas>
+        <div id="scoreBoard">Score: 0</div>
+
+        <div id="uiLayer">
+            <!-- スタート画面 -->
+            <div id="startScreen">
+                <h2>バランスゲーム</h2>
+                <p class="instruction">マウスを左右に動かしてボードを傾け、<br>ボールを落とさないようにキープしてください。</p>
+                <button onclick="startGame()">スタート</button>
+            </div>
+
+            <!-- ゲームオーバー画面 -->
+            <div id="gameOverScreen" class="hidden">
+                <h2>GAME OVER</h2>
+                <p id="finalScore">Score: 0</p>
+                <button onclick="startGame()">もう一度</button>
+            </div>
+        </div>
+    </div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const scoreBoard = document.getElementById('scoreBoard');
+    const startScreen = document.getElementById('startScreen');
+    const gameOverScreen = document.getElementById('gameOverScreen');
+    const finalScoreDisplay = document.getElementById('finalScore');
+
+    // ゲームの状態
+    let isPlaying = false;
+    let score = 0;
+    let startTime = 0;
+    let animationId;
+
+    // 物理パラメータ
+    const gravity = 0.15;    // 重力の強さ（ボールが転がる加速）
+    const friction = 0.995;  // 摩擦（少しずつ減速する）
+    
+    // ボードの設定
+    const boardWidth = 500;
+    const boardHeight = 20;
+    let boardAngle = 0;      // ボードの現在の傾き（ラジアン）
+    
+    // マウス入力用
+    let mouseX = canvas.width / 2;
+
+    // ボールの設定
+    let ball = {
+        x: 0,        // ボードの中心からの距離 (ピクセル)
+        y: -30,      // ボードの上へのオフセット
+        radius: 15,
+        velocity: 0  // 転がる速度
+    };
+
+    // マウス位置の取得
+    canvas.addEventListener('mousemove', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        mouseX = e.clientX - rect.left;
+    });
+
+    // タッチ対応
+    canvas.addEventListener('touchmove', (e) => {
+        e.preventDefault();
+        const rect = canvas.getBoundingClientRect();
+        const touch = e.touches[0];
+        mouseX = touch.clientX - rect.left;
+    }, { passive: false });
+
+    // ゲーム初期化
+    function startGame() {
+        isPlaying = true;
+        score = 0;
+        startTime = Date.now();
+        
+        // パラメータのリセット
+        ball.x = 0;
+        ball.velocity = 0;
+        boardAngle = 0;
+        mouseX = canvas.width / 2;
+
+        // UI切り替え
+        startScreen.classList.add('hidden');
+        gameOverScreen.classList.add('hidden');
+        
+        // ループ開始
+        if (animationId) cancelAnimationFrame(animationId);
+        gameLoop();
+    }
+
+    // ゲームオーバー処理
+    function gameOver() {
+        isPlaying = false;
+        finalScoreDisplay.innerText = `Score: ${score}`;
+        gameOverScreen.classList.remove('hidden');
+    }
+
+    // ゲームループ（描画と計算）
+    function gameLoop() {
+        if (!isPlaying) return;
+
+        updatePhysics();
+        draw();
+
+        // スコア更新（生存時間）
+        score = Math.floor((Date.now() - startTime) / 100);
+        scoreBoard.innerText = `Score: ${score}`;
+
+        animationId = requestAnimationFrame(gameLoop);
+    }
+
+    // 物理演算
+    function updatePhysics() {
+        // 1. マウスの位置に基づいてボードの目標角度を計算
+        // 画面中央より右なら右下がり、左なら左下がり
+        // 最大角度を制限（Math.PI / 6 = 30度くらい）
+        const targetAngle = (mouseX - canvas.width / 2) * 0.0015;
+        const maxAngle = Math.PI / 6;
+        
+        // スムーズな動きのために線形補間（Lerp）っぽく近づける
+        boardAngle += (targetAngle - boardAngle) * 0.1;
+
+        // 角度制限
+        if (boardAngle > maxAngle) boardAngle = maxAngle;
+        if (boardAngle < -maxAngle) boardAngle = -maxAngle;
+
+        // 2. ボールの動き計算
+        // 傾きに応じて加速 (重力加速度 * sin(角度))
+        // 角度が正（右下がり）のとき、右（プラス方向）へ加速
+        ball.velocity += Math.sin(boardAngle) * gravity;
+        
+        // 摩擦
+        ball.velocity *= friction;
+
+        // 位置更新
+        ball.x += ball.velocity;
+
+        // 3. ゲームオーバー判定
+        // ボールの位置がボードの幅の半分を超えたら落ちる
+        if (Math.abs(ball.x) > boardWidth / 2 + ball.radius) {
+            gameOver();
+        }
+    }
+
+    // 描画処理
+    function draw() {
+        // 画面クリア
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        ctx.save();
+        
+        // 画面の中央を原点（0,0）にする
+        ctx.translate(canvas.width / 2, canvas.height / 2);
+
+        // --- ここから回転の世界 ---
+        
+        // ボードの角度分だけCanvas全体を回転
+        ctx.rotate(boardAngle);
+
+        // 土台（支点）の描画（回転しないように見せるため逆回転させるか、デザインで誤魔化す）
+        // ここではシンプルにボードと一緒に動く装飾として描く
+        ctx.fillStyle = '#888';
+        ctx.beginPath();
+        ctx.moveTo(-20, 20);
+        ctx.lineTo(20, 20);
+        ctx.lineTo(0, 0); 
+        ctx.fill();
+
+        // ボードの描画
+        ctx.fillStyle = '#4488ff';
+        ctx.fillRect(-boardWidth / 2, 0, boardWidth, boardHeight);
+
+        // ボールの描画
+        // Y位置はボードの上（半径分引く）
+        ctx.beginPath();
+        ctx.arc(ball.x, -ball.radius, ball.radius, 0, Math.PI * 2);
+        
+        // グラデーションで立体感を出す
+        const gradient = ctx.createRadialGradient(
+            ball.x - 5, -ball.radius - 5, 2, 
+            ball.x, -ball.radius, ball.radius
+        );
+        gradient.addColorStop(0, '#fff');
+        gradient.addColorStop(1, '#ff4757');
+        
+        ctx.fillStyle = gradient;
+        ctx.fill();
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        ctx.restore();
+    }
+
+    // 最初の描画（背景などを表示しておくため）
+    draw();
+
+</script>
+</body>
+</html>

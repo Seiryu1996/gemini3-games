@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>スマホdeバランスゲーム</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #222;
+            color: white;
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden; /* スクロール防止 */
+            touch-action: none; /* スマホでの余計な動作防止 */
+        }
+
+        h1 {
+            margin: 0 0 10px 0;
+            font-size: 20px;
+            color: #eee;
+            position: absolute;
+            top: 20px;
+        }
+
+        #gameContainer {
+            position: relative;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+            width: 95%; /* スマホ画面に合わせて幅調整 */
+            max-width: 800px;
+        }
+
+        canvas {
+            background-color: #333;
+            border-radius: 4px;
+            display: block;
+            width: 100%; /* コンテナに合わせて伸縮 */
+            height: auto;
+        }
+
+        #uiLayer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        #startScreen, #gameOverScreen {
+            background: rgba(0, 0, 0, 0.85);
+            padding: 30px;
+            border-radius: 12px;
+            pointer-events: auto;
+            width: 80%;
+            max-width: 400px;
+        }
+
+        button {
+            background: #ff4757;
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            font-size: 18px;
+            font-weight: bold;
+            cursor: pointer;
+            border-radius: 50px;
+            margin-top: 20px;
+            transition: background 0.2s, transform 0.1s;
+            outline: none;
+        }
+
+        button:active {
+            transform: scale(0.95);
+            background: #ff2e40;
+        }
+
+        /* 戻るボタン（共通UI） */
+        .back-btn {
+            position: fixed;
+            top: 14px;
+            left: 14px;
+            z-index: 200;
+            padding: 10px 14px;
+            border-radius: 12px;
+            background: rgba(0,0,0,0.6);
+            color: #0ff;
+            border: 1px solid rgba(0,255,255,0.6);
+            text-decoration: none;
+            font-weight: 700;
+            letter-spacing: 1px;
+            box-shadow: 0 0 10px rgba(0,255,255,0.4);
+            pointer-events: auto;
+        }
+        .back-btn:hover { background: rgba(0,255,255,0.12); }
+
+        #scoreBoard {
+            position: absolute;
+            top: 10px;
+            right: 15px;
+            font-size: 18px;
+            font-weight: bold;
+            color: #fff;
+            text-shadow: 1px 1px 2px #000;
+        }
+        
+        p.instruction {
+            font-size: 14px;
+            color: #ccc;
+            line-height: 1.6;
+        }
+
+        /* センサー許可状態の表示など */
+        #sensorStatus {
+            font-size: 12px;
+            color: #aaa;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+
+    <a class="back-btn" href="../index.html">← HUB</a>
+
+    <h1>GYRO BALANCE</h1>
+
+    <div id="gameContainer">
+        <canvas id="gameCanvas" width="800" height="500"></canvas>
+        <div id="scoreBoard">Score: 0</div>
+
+        <div id="uiLayer">
+            <!-- スタート画面 -->
+            <div id="startScreen">
+                <h2>バランスゲーム</h2>
+                <p class="instruction">スマホを左右に傾けて<br>ボールを落とさないように！<br><small>(PCの場合はマウス操作)</small></p>
+                <button id="startBtn">スタート</button>
+                <div id="sensorStatus"></div>
+            </div>
+
+            <!-- ゲームオーバー画面 -->
+            <div id="gameOverScreen" class="hidden">
+                <h2>GAME OVER</h2>
+                <p id="finalScore" style="font-size: 24px; font-weight: bold;">Score: 0</p>
+                <button onclick="resetGame()">もう一度</button>
+            </div>
+        </div>
+    </div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const scoreBoard = document.getElementById('scoreBoard');
+    const startScreen = document.getElementById('startScreen');
+    const gameOverScreen = document.getElementById('gameOverScreen');
+    const finalScoreDisplay = document.getElementById('finalScore');
+    const startBtn = document.getElementById('startBtn');
+    const sensorStatus = document.getElementById('sensorStatus');
+
+    // ゲームの状態
+    let isPlaying = false;
+    let score = 0;
+    let startTime = 0;
+    let animationId;
+
+    // 物理パラメータ
+    const gravity = 0.2;
+    const friction = 0.99;
+    
+    // ボードの設定
+    const boardWidth = 500;
+    const boardHeight = 20;
+    let boardAngle = 0;
+    
+    // 入力値
+    let inputAngle = 0; // マウスまたはジャイロから計算した目標角度
+    let useGyro = false; // ジャイロが有効かどうか
+
+    // ボールの設定
+    let ball = {
+        x: 0,
+        y: -30,
+        radius: 15,
+        velocity: 0
+    };
+
+    // --- イベントリスナー設定 ---
+
+    // マウス操作（PC用フォールバック）
+    canvas.addEventListener('mousemove', (e) => {
+        if (useGyro) return; // ジャイロ有効時はマウス無視
+        updateInputFromMouse(e.clientX);
+    });
+    
+    // タッチ操作（ジャイロが使えないとき用）
+    canvas.addEventListener('touchmove', (e) => {
+        if (useGyro) return;
+        e.preventDefault();
+        updateInputFromMouse(e.touches[0].clientX);
+    }, { passive: false });
+
+    function updateInputFromMouse(clientX) {
+        const rect = canvas.getBoundingClientRect();
+        // キャンバス内の相対座標比率 (-1.0 〜 1.0)
+        const relX = (clientX - rect.left) / rect.width; 
+        // 中心を0として -0.5 〜 0.5 にし、角度係数を掛ける
+        const normalized = (relX - 0.5) * 2; 
+        inputAngle = normalized * (Math.PI / 6); // 最大30度傾く
+    }
+
+    // --- ジャイロセンサー処理 ---
+
+    function handleOrientation(event) {
+        // gamma: スマホを縦に持ったときの左右の傾き (-90 〜 90)
+        // beta: スマホを横に持ったときの傾きの場合もあるが、ここでは一般的な縦持ち(Gamma)を基準にする
+        // 画面の向きによって軸が変わるが、簡易実装としてGammaを使用
+        
+        let tilt = event.gamma; 
+        
+        // nullチェック
+        if (tilt === null) return;
+
+        // 90度以上傾けると反転してしまう現象の対策（簡易的）
+        if (tilt > 45) tilt = 45;
+        if (tilt < -45) tilt = -45;
+
+        // 角度(度数法)をラジアンに変換
+        // 45度の傾きでゲーム内の最大角度(30度くらい)になるように調整
+        inputAngle = (tilt / 45) * (Math.PI / 6);
+        
+        useGyro = true;
+        sensorStatus.innerText = "ジャイロセンサー: ON";
+    }
+
+    // --- ゲーム開始と権限リクエスト ---
+
+    startBtn.addEventListener('click', () => {
+        requestGyroPermission();
+    });
+
+    function requestGyroPermission() {
+        // iOS 13+ は権限リクエストが必要
+        if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+            DeviceOrientationEvent.requestPermission()
+                .then(permissionState => {
+                    if (permissionState === 'granted') {
+                        window.addEventListener('deviceorientation', handleOrientation);
+                        startGame();
+                    } else {
+                        alert('センサーの許可が得られませんでした。タッチ操作で開始します。');
+                        startGame();
+                    }
+                })
+                .catch(console.error);
+        } else {
+            // Androidや古いiOSなど
+            window.addEventListener('deviceorientation', handleOrientation);
+            startGame();
+        }
+    }
+
+    function startGame() {
+        isPlaying = true;
+        score = 0;
+        startTime = Date.now();
+        
+        // リセット
+        ball.x = 0;
+        ball.velocity = 0;
+        boardAngle = 0;
+        inputAngle = 0;
+
+        startScreen.classList.add('hidden');
+        gameOverScreen.classList.add('hidden');
+        
+        if (animationId) cancelAnimationFrame(animationId);
+        gameLoop();
+    }
+
+    function resetGame() {
+        // リセット時は再度権限を求めず即スタート
+        startGame();
+    }
+
+    function gameOver() {
+        isPlaying = false;
+        finalScoreDisplay.innerText = `Score: ${score}`;
+        gameOverScreen.classList.remove('hidden');
+    }
+
+    // --- ゲームループ ---
+
+    function gameLoop() {
+        if (!isPlaying) return;
+
+        updatePhysics();
+        draw();
+
+        score = Math.floor((Date.now() - startTime) / 100);
+        scoreBoard.innerText = `Score: ${score}`;
+
+        animationId = requestAnimationFrame(gameLoop);
+    }
+
+    function updatePhysics() {
+        // 目標角度に向かってスムーズに動かす
+        boardAngle += (inputAngle - boardAngle) * 0.1;
+
+        // 角度制限
+        const maxAngle = Math.PI / 4;
+        if (boardAngle > maxAngle) boardAngle = maxAngle;
+        if (boardAngle < -maxAngle) boardAngle = -maxAngle;
+
+        // 重力加速
+        ball.velocity += Math.sin(boardAngle) * gravity;
+        ball.velocity *= friction;
+        ball.x += ball.velocity;
+
+        // 落下判定
+        if (Math.abs(ball.x) > boardWidth / 2 + ball.radius) {
+            gameOver();
+        }
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.save();
+        ctx.translate(canvas.width / 2, canvas.height / 2);
+
+        // ボード回転
+        ctx.rotate(boardAngle);
+
+        // ボード
+        ctx.fillStyle = '#4488ff';
+        // 角を丸く描画するための小技
+        roundRect(ctx, -boardWidth / 2, 0, boardWidth, boardHeight, 5);
+        ctx.fill();
+
+        // 中心マーカー
+        ctx.fillStyle = 'rgba(255,255,255,0.3)';
+        ctx.fillRect(-2, 0, 4, boardHeight);
+
+        // ボール
+        ctx.beginPath();
+        ctx.arc(ball.x, -ball.radius, ball.radius, 0, Math.PI * 2);
+        
+        const gradient = ctx.createRadialGradient(
+            ball.x - 5, -ball.radius - 5, 2, 
+            ball.x, -ball.radius, ball.radius
+        );
+        gradient.addColorStop(0, '#fff');
+        gradient.addColorStop(1, '#ff4757');
+        
+        ctx.fillStyle = gradient;
+        ctx.fill();
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        ctx.restore();
+    }
+
+    // 角丸四角形を描くヘルパー関数
+    function roundRect(ctx, x, y, w, h, r) {
+        if (w < 2 * r) r = w / 2;
+        if (h < 2 * r) r = h / 2;
+        ctx.beginPath();
+        ctx.moveTo(x+r, y);
+        ctx.arcTo(x+w, y,   x+w, y+h, r);
+        ctx.arcTo(x+w, y+h, x,   y+h, r);
+        ctx.arcTo(x,   y+h, x,   y,   r);
+        ctx.arcTo(x,   y,   x+w, y,   r);
+        ctx.closePath();
+    }
+
+    draw();
+
+</script>
+</body>
+</html>
