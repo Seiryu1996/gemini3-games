@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Web AR Fireworks</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #000;
+        }
+
+        /* ビデオ要素（背景、カメラ映像） */
+        #camera-feed {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            z-index: 1;
+        }
+
+        /* キャンバス要素（花火描画） */
+        #fireworks-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 2;
+            /* 合成モード：花火を光らせる */
+            mix-blend-mode: screen; 
+        }
+
+        /* スタートボタンのオーバーレイ */
+        #overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            font-family: sans-serif;
+            text-align: center;
+        }
+
+        button {
+            padding: 15px 30px;
+            font-size: 1.2rem;
+            background: linear-gradient(45deg, #ff0055, #ff9900);
+            border: none;
+            color: white;
+            border-radius: 50px;
+            cursor: pointer;
+            box-shadow: 0 0 20px rgba(255, 100, 0, 0.5);
+            margin-top: 20px;
+        }
+
+        p { margin: 0 20px; line-height: 1.5; }
+    </style>
+</head>
+<body>
+
+    <!-- カメラ映像 -->
+    <video id="camera-feed" autoplay playsinline muted></video>
+    
+    <!-- 花火描画用キャンバス -->
+    <canvas id="fireworks-canvas"></canvas>
+
+    <!-- スタート画面 -->
+    <div id="overlay">
+        <h2>AR 花火大会</h2>
+        <p>カメラ映像の上に花火を打ち上げます。<br>音が出ますのでご注意ください。</p>
+        <button id="start-btn">花火大会を開始する</button>
+    </div>
+
+<script>
+    // --- 定数と設定 ---
+    const canvas = document.getElementById('fireworks-canvas');
+    const ctx = canvas.getContext('2d');
+    const video = document.getElementById('camera-feed');
+    const startBtn = document.getElementById('start-btn');
+    const overlay = document.getElementById('overlay');
+
+    let width, height;
+    let fireworks = [];
+    let particles = [];
+    let audioCtx;
+
+    // --- Web Audio API (プロシージャル効果音) ---
+    function initAudio() {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new AudioContext();
+    }
+
+    // 打ち上げ音（ヒュ〜）
+    function playLaunchSound() {
+        if (!audioCtx) return;
+        const osc = audioCtx.createOscillator();
+        const gainNode = audioCtx.createGain();
+
+        osc.type = 'sine';
+        // 周波数をスライドさせる
+        osc.frequency.setValueAtTime(400, audioCtx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(1000, audioCtx.currentTime + 0.3);
+
+        gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+
+        osc.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.5);
+    }
+
+    // 爆発音（ドン！）
+    function playExplosionSound(type) {
+        if (!audioCtx) return;
+        
+        // ノイズバッファの作成
+        const bufferSize = audioCtx.sampleRate * 2; // 2秒
+        const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+            data[i] = Math.random() * 2 - 1;
+        }
+
+        const noise = audioCtx.createBufferSource();
+        noise.buffer = buffer;
+
+        // フィルターで重低音にする
+        const filter = audioCtx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.value = 1000; // 初期周波数
+
+        // 音量エンベロープ
+        const gainNode = audioCtx.createGain();
+        gainNode.gain.setValueAtTime(1, audioCtx.currentTime);
+        
+        // 花火の種類によって音を変える
+        if (type === 'willow') {
+            // 柳は長く余韻を残す
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 2.0);
+            filter.frequency.setValueAtTime(400, audioCtx.currentTime);
+        } else {
+            // 普通の花火は鋭く減衰
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 1.0);
+            filter.frequency.linearRampToValueAtTime(100, audioCtx.currentTime + 0.5);
+        }
+
+        noise.connect(filter);
+        filter.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+
+        noise.start();
+    }
+
+    // --- AR / カメラ設定 ---
+    async function startCamera() {
+        try {
+            const constraints = {
+                video: {
+                    facingMode: 'environment' // 外カメラを指定
+                },
+                audio: false
+            };
+            const stream = await navigator.mediaDevices.getUserMedia(constraints);
+            video.srcObject = stream;
+        } catch (err) {
+            alert("カメラの起動に失敗しました。許可設定を確認してください。\nPCの場合はWebカメラが使用されます。");
+            console.error("Camera Error:", err);
+        }
+    }
+
+    // --- 花火ロジック ---
+
+    // 色ユーティリティ
+    function randomColor() {
+        const hue = Math.floor(Math.random() * 360);
+        return `hsl(${hue}, 100%, 60%)`;
+    }
+
+    // 打ち上げ玉クラス
+    class Firework {
+        constructor() {
+            this.x = Math.random() * width;
+            this.y = height;
+            this.targetY = height * 0.1 + Math.random() * (height * 0.4); // 画面上部10%〜50%の位置で爆発
+            this.speed = 10 + Math.random() * 4;
+            this.angle = -Math.PI / 2 + (Math.random() * 0.2 - 0.1); // ほぼ真上
+            this.vx = Math.cos(this.angle) * this.speed;
+            this.vy = Math.sin(this.angle) * this.speed;
+            this.color = randomColor();
+            this.type = Math.random() > 0.7 ? 'willow' : 'normal'; // 30%の確率で柳
+            if (Math.random() > 0.8) this.type = 'multi'; // さらにレアで変色花火
+            
+            playLaunchSound();
+        }
+
+        update(index) {
+            this.x += this.vx;
+            this.y += this.vy;
+            this.vy += 0.15; // 重力
+
+            // 頂点付近（速度が落ちた）または目標高さに達したら爆発
+            if (this.vy >= 0 || this.y <= this.targetY) {
+                createParticles(this.x, this.y, this.color, this.type);
+                fireworks.splice(index, 1);
+            }
+        }
+
+        draw() {
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, 3, 0, Math.PI * 2);
+            ctx.fillStyle = '#fff'; // 打ち上げ時は白
+            ctx.fill();
+        }
+    }
+
+    // 粒子クラス
+    class Particle {
+        constructor(x, y, color, type) {
+            this.x = x;
+            this.y = y;
+            this.type = type;
+            
+            // 爆発の広がり
+            const angle = Math.random() * Math.PI * 2;
+            // 柳の場合は初速を少し抑える
+            const speed = (Math.random() * 5) + 2; 
+            
+            this.vx = Math.cos(angle) * speed;
+            this.vy = Math.sin(angle) * speed;
+            
+            this.friction = 0.95; // 空気抵抗
+            this.gravity = 0.1;   // 重力
+            
+            this.alpha = 1;
+            this.color = color;
+            this.decay = Math.random() * 0.015 + 0.005; // 消える速さ
+
+            // 柳花火の設定
+            if (this.type === 'willow') {
+                this.friction = 0.92; // 抵抗を強く（すぐ止まる）
+                this.gravity = 0.05;  // ゆっくり落ちる
+                this.decay = 0.005;   // 長持ち
+                this.color = `hsl(45, 100%, 70%)`; // 金色固定
+            }
+            
+            // 履歴（軌跡描画用）
+            this.history = [];
+        }
+
+        update(index) {
+            this.vx *= this.friction;
+            this.vy *= this.friction;
+            this.vy += this.gravity;
+            
+            this.x += this.vx;
+            this.y += this.vy;
+            this.alpha -= this.decay;
+
+            // 軌跡の保存（柳なら長く、普通なら短く）
+            const historyLimit = this.type === 'willow' ? 10 : 3;
+            this.history.push({x: this.x, y: this.y});
+            if (this.history.length > historyLimit) this.history.shift();
+
+            // 変色花火の処理
+            if (this.type === 'multi' && this.alpha > 0.5) {
+               // HSLの色相を少し回すなど
+            }
+
+            if (this.alpha <= 0) {
+                particles.splice(index, 1);
+            }
+        }
+
+        draw() {
+            ctx.globalAlpha = this.alpha;
+            
+            // 軌跡を描画
+            ctx.beginPath();
+            if (this.history.length > 0) {
+                ctx.moveTo(this.history[0].x, this.history[0].y);
+                for (let i = 1; i < this.history.length; i++) {
+                    ctx.lineTo(this.history[i].x, this.history[i].y);
+                }
+            }
+            ctx.lineTo(this.x, this.y);
+            
+            ctx.strokeStyle = this.color;
+            ctx.lineWidth = this.type === 'willow' ? 1 : 2;
+            ctx.stroke();
+            
+            // 本体
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, 1.5, 0, Math.PI * 2);
+            ctx.fillStyle = this.color;
+            ctx.fill();
+            
+            ctx.globalAlpha = 1;
+        }
+    }
+
+    function createParticles(x, y, color, type) {
+        playExplosionSound(type);
+        const particleCount = type === 'willow' ? 80 : 120;
+        
+        for (let i = 0; i < particleCount; i++) {
+            particles.push(new Particle(x, y, color, type));
+        }
+    }
+
+    // --- メインループ ---
+    function loop() {
+        requestAnimationFrame(loop);
+
+        // 画面クリア（完全透明にしてカメラ映像を見せる）
+        ctx.clearRect(0, 0, width, height);
+
+        // 合成モード：加算発光（重なった部分が明るくなる）
+        ctx.globalCompositeOperation = 'lighter';
+
+        // ランダムに打ち上げ
+        if (Math.random() < 0.03) { // 確率調整
+            fireworks.push(new Firework());
+        }
+
+        // 花火玉更新
+        fireworks.forEach((fw, index) => {
+            fw.update(index);
+            fw.draw();
+        });
+
+        // 粒子更新
+        particles.forEach((p, index) => {
+            p.update(index);
+            p.draw();
+        });
+        
+        ctx.globalCompositeOperation = 'source-over';
+    }
+
+    // --- 初期化 ---
+    function resize() {
+        width = window.innerWidth;
+        height = window.innerHeight;
+        canvas.width = width;
+        canvas.height = height;
+    }
+
+    window.addEventListener('resize', resize);
+    resize();
+
+    // スタートボタン処理
+    startBtn.addEventListener('click', () => {
+        initAudio(); // 音声コンテキスト再開（ユーザー操作が必要）
+        if (audioCtx.state === 'suspended') {
+            audioCtx.resume();
+        }
+        
+        startCamera();
+        overlay.style.display = 'none';
+        loop();
+    });
+
+</script>
+</body>
+</html>
