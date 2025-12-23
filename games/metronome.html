@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>プロフェッショナル・メトロノーム</title>
+    <style>
+        :root {
+            --primary-color: #3498db;
+            --bg-color: #f4f7f6;
+            --panel-color: #ffffff;
+            --text-color: #2c3e50;
+        }
+
+        body {
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+
+        .container {
+            background: var(--panel-color);
+            padding: 2rem;
+            border-radius: 20px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            width: 350px;
+            text-align: center;
+        }
+
+        h1 { margin-bottom: 1.5rem; font-size: 1.5rem; }
+
+        /* 振り子エリア */
+        .pendulum-container {
+            width: 100%;
+            height: 120px;
+            background: #eee;
+            border-radius: 10px;
+            position: relative;
+            overflow: hidden;
+            margin-bottom: 20px;
+            padding-top: 8px; /* 矢印用の余白 */
+            box-sizing: border-box;
+        }
+
+        .arrow {
+            position: absolute;
+            top: 6px;
+            left: 50%;
+            width: 0;
+            height: 0;
+            border-left: 10px solid transparent;
+            border-right: 10px solid transparent;
+            border-top: 16px solid #ffb347; /* 下向き矢印 */
+            border-bottom: 0;
+            transform: translateX(-50%);
+            opacity: 0.8;
+            filter: drop-shadow(0 2px 3px rgba(0,0,0,0.18));
+            transition: border-top-color 0.12s ease, opacity 0.12s ease, transform 0.12s ease;
+        }
+        .arrow.flash {
+            border-top-color: #ff7043;
+            opacity: 1;
+            transform: translateX(-50%) translateY(2px);
+        }
+
+        .pendulum {
+            width: 4px;
+            height: 100px;
+            background: var(--primary-color);
+            position: absolute;
+            bottom: 10px;
+            left: 50%;
+            transform-origin: bottom center;
+            transform: rotate(0deg);
+            will-change: transform;
+        }
+
+        .pendulum::after {
+            content: '';
+            width: 16px;
+            height: 16px;
+            background: #2980b9;
+            border-radius: 50%;
+            position: absolute;
+            top: 0;
+            left: -6px;
+        }
+
+        /* コントロール UI */
+        .tempo-display {
+            font-size: 3rem;
+            font-weight: bold;
+            color: var(--primary-color);
+            margin: 10px 0;
+        }
+
+        .tempo-label {
+            font-size: 1.2rem;
+            font-weight: bold;
+            color: #7f8c8d;
+            height: 1.5rem;
+            margin-bottom: 10px;
+        }
+
+        input[type="range"] {
+            width: 100%;
+            margin: 20px 0;
+        }
+
+        .controls-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 20px;
+            text-align: left;
+        }
+
+        label { font-size: 0.8rem; display: block; margin-bottom: 4px; color: #7f8c8d; }
+
+        select, button {
+            width: 100%;
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid #ddd;
+            font-size: 1rem;
+        }
+
+        .start-btn {
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            font-size: 1.2rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .start-btn:hover { background-color: #2980b9; }
+        .start-btn.stop { background-color: #e74c3c; }
+
+        /* 戻るボタン（共通UI） */
+        .back-btn {
+            position: fixed;
+            top: 14px;
+            left: 14px;
+            z-index: 200;
+            padding: 10px 14px;
+            border-radius: 12px;
+            background: rgba(0,0,0,0.6);
+            color: #0ff;
+            border: 1px solid rgba(0,255,255,0.6);
+            text-decoration: none;
+            font-weight: 700;
+            letter-spacing: 1px;
+            box-shadow: 0 0 10px rgba(0,255,255,0.4);
+            pointer-events: auto;
+        }
+        .back-btn:hover { background: rgba(0,255,255,0.12); }
+
+        .beat-indicator {
+            display: flex;
+            justify-content: center;
+            gap: 8px;
+            margin-bottom: 15px;
+        }
+
+        .dot {
+            width: 12px;
+            height: 12px;
+            background: #ddd;
+            border-radius: 50%;
+        }
+
+        .dot.active { background: var(--primary-color); transform: scale(1.2); }
+        .dot.accent { background: #e74c3c; }
+    </style>
+</head>
+<body>
+
+<a href="../index.html" class="back-btn">← BACK</a>
+
+<div class="container">
+    <h1>Metronome</h1>
+
+    <div class="pendulum-container">
+        <div class="arrow center" id="arrow-center"></div>
+        <div class="pendulum" id="pendulum"></div>
+    </div>
+
+    <div id="beat-dots" class="beat-indicator"></div>
+
+    <div class="tempo-label" id="tempo-text">Moderato</div>
+    <div class="tempo-display" id="bpm-value">120</div>
+    
+    <input type="range" id="tempo-slider" min="30" max="250" value="120">
+
+    <div class="controls-grid">
+        <div>
+            <label>速度記号</label>
+            <select id="tempo-marking">
+                <option value="">(選択して変更)</option>
+                <option value="40">Grave (40-44)</option>
+                <option value="46">Largo (44-48)</option>
+                <option value="52">Adagio (48-56)</option>
+                <option value="60">Larghetto (58-63)</option>
+                <option value="66">Adagietto (65-69)</option>
+                <option value="72">Andante (70-77)</option>
+                <option value="92">Moderato (88-112)</option>
+                <option value="120" selected>Allegro (116-128)</option>
+                <option value="160">Vivace (152-168)</option>
+                <option value="184">Presto (170-192)</option>
+                <option value="208">Prestissimo (200-)</option>
+            </select>
+        </div>
+        <div>
+            <label>拍子</label>
+            <select id="time-signature">
+                <option value="2">2/4</option>
+                <option value="3">3/4</option>
+                <option value="4" selected>4/4</option>
+                <option value="6">6/8</option>
+            </select>
+        </div>
+        <div>
+            <label>リズム細分</label>
+            <select id="subdivision">
+                <option value="1">4分音符</option>
+                <option value="2">8分音符</option>
+            </select>
+        </div>
+        <div>
+            <label>音色</label>
+            <select id="sound-type">
+                <option value="sine">電子音</option>
+                <option value="woodblock">ウッドブロック</option>
+                <option value="percussion">打楽器</option>
+            </select>
+        </div>
+    </div>
+
+    <button id="start-stop" class="start-btn">START</button>
+</div>
+
+<script>
+    // --- データ定義 ---
+    const tempoMarkings = [
+        { name: "Grave", min: 0, max: 44 },
+        { name: "Largo", min: 44, max: 48 },
+        { name: "Adagio", min: 48, max: 56 },
+        { name: "Larghetto", min: 56, max: 64 },
+        { name: "Adagietto", min: 64, max: 70 },
+        { name: "Andante", min: 70, max: 77 },
+        { name: "Andantino", min: 77, max: 88 },
+        { name: "Moderato", min: 88, max: 112 },
+        { name: "Allegretto", min: 112, max: 116 },
+        { name: "Allegro", min: 116, max: 128 },
+        { name: "Vivace", min: 128, max: 168 },
+        { name: "Presto", min: 168, max: 200 },
+        { name: "Prestissimo", min: 200, max: 999 }
+    ];
+
+    // --- 変数管理 ---
+    let audioCtx = null;
+    let isPlaying = false;
+    let tempo = 120;
+    let beatsPerBar = 4;
+    let subdivision = 1; // 1: 4分音符, 2: 8分音符
+    let currentBeat = 0;
+    let nextNoteTime = 0.0;
+    let timerID = null;
+    const lookahead = 25.0; // スケジューリング間隔(ms)
+    const scheduleAheadTime = 0.1; // 予約する時間幅(s)
+    const maxSwingAngle = 30; // 実機に近い振れ幅（片側）
+    let arrowFlashTimer = null;
+    let swingAnimationId = null;
+    let swingStartTime = 0;
+
+    // DOM要素
+    const startStopBtn = document.getElementById('start-stop');
+    const tempoSlider = document.getElementById('tempo-slider');
+    const bpmDisplay = document.getElementById('bpm-value');
+    const tempoText = document.getElementById('tempo-text');
+    const timeSigSelect = document.getElementById('time-signature');
+    const subdivisionSelect = document.getElementById('subdivision');
+    const markingSelect = document.getElementById('tempo-marking');
+    const soundSelect = document.getElementById('sound-type');
+    const pendulum = document.getElementById('pendulum');
+    const arrowCenter = document.getElementById('arrow-center');
+    const dotsContainer = document.getElementById('beat-dots');
+
+    // --- 音声生成 ---
+    function playTone(time, isFirstBeat, isSubdivision) {
+        const osc = audioCtx.createOscillator();
+        const envelope = audioCtx.createGain();
+
+        const soundType = soundSelect.value;
+        
+        // 音色の設定
+        if (soundType === 'sine') {
+            osc.type = 'sine';
+            osc.frequency.value = isFirstBeat ? 880 : (isSubdivision ? 440 : 660);
+        } else if (soundType === 'woodblock') {
+            osc.type = 'triangle';
+            osc.frequency.value = isFirstBeat ? 1200 : (isSubdivision ? 600 : 800);
+        } else {
+            osc.type = 'square';
+            osc.frequency.value = isFirstBeat ? 150 : (isSubdivision ? 75 : 100);
+        }
+
+        envelope.gain.setValueAtTime(1, time);
+        envelope.gain.exponentialRampToValueAtTime(0.001, time + 0.1);
+
+        osc.connect(envelope);
+        envelope.connect(audioCtx.destination);
+
+        osc.start(time);
+        osc.stop(time + 0.1);
+    }
+
+    // --- メインロジック ---
+    function nextNote() {
+        const secondsPerBeat = 60.0 / tempo / subdivision;
+        nextNoteTime += secondsPerBeat;
+        currentBeat++;
+        if (currentBeat >= beatsPerBar * subdivision) {
+            currentBeat = 0;
+        }
+    }
+
+    function scheduleNote(beatNumber, time) {
+        const isSub = (subdivision === 2 && beatNumber % 2 !== 0);
+        const isFirst = (beatNumber === 0);
+        
+        playTone(time, isFirst, isSub);
+
+        // ビジュアル更新（メインスレッドで実行）
+        setTimeout(() => {
+            updateVisuals(beatNumber, isSub);
+        }, (time - audioCtx.currentTime) * 1000);
+    }
+
+    function scheduler() {
+        while (nextNoteTime < audioCtx.currentTime + scheduleAheadTime) {
+            scheduleNote(currentBeat, nextNoteTime);
+            nextNote();
+        }
+        timerID = setTimeout(scheduler, lookahead);
+    }
+
+    function restartSequence() {
+        currentBeat = 0;
+        nextNoteTime = audioCtx.currentTime + 0.05;
+        startStopBtn.innerText = 'STOP';
+        startStopBtn.classList.add('stop');
+        if (timerID) clearTimeout(timerID);
+        startSwing(nextNoteTime); // ビートと振り子位相を合わせる
+        scheduler();
+    }
+
+    // --- 視覚的演出 ---
+    function startSwing(baseTime) {
+        if (!audioCtx) return;
+        swingStartTime = baseTime || audioCtx.currentTime;
+        const step = () => {
+            const beatSeconds = 60 / tempo; // 四分音符で中心を通過
+            const elapsed = audioCtx.currentTime - swingStartTime;
+            // 中心でクリック＝sin(π * t / beatSeconds) で毎拍0を通過
+            const angle = maxSwingAngle * Math.sin(Math.PI * (elapsed / beatSeconds));
+            pendulum.style.transform = `rotate(${angle}deg)`;
+            swingAnimationId = requestAnimationFrame(step);
+        };
+        if (swingAnimationId) cancelAnimationFrame(swingAnimationId);
+        swingAnimationId = requestAnimationFrame(step);
+    }
+
+    function stopSwing() {
+        if (swingAnimationId) cancelAnimationFrame(swingAnimationId);
+        swingAnimationId = null;
+        pendulum.style.transform = 'rotate(0deg)';
+    }
+
+    function updateVisuals(beatNumber, isSub) {
+        // 振り子アニメーション
+        // 4分音符のタイミングで左右に振る
+        if (!isSub) {
+            flashArrow(); // 音と同時に矢印を強調
+            
+            // ドットの更新
+            const dots = document.querySelectorAll('.dot');
+            dots.forEach((dot, idx) => {
+                dot.classList.remove('active');
+                if (idx === Math.floor(beatNumber / subdivision)) {
+                    dot.classList.add('active');
+                }
+            });
+        }
+    }
+
+    function initDots() {
+        dotsContainer.innerHTML = '';
+        for (let i = 0; i < beatsPerBar; i++) {
+            const dot = document.createElement('div');
+            dot.classList.add('dot');
+            if (i === 0) dot.classList.add('accent');
+            dotsContainer.appendChild(dot);
+        }
+    }
+
+    function updateTempoText(val) {
+        const match = tempoMarkings.find(m => val >= m.min && val <= m.max);
+        tempoText.innerText = match ? match.name : "";
+    }
+
+    function flashArrow() {
+        if (!arrowCenter) return;
+        if (arrowFlashTimer) clearTimeout(arrowFlashTimer);
+        arrowCenter.classList.add('flash');
+        arrowFlashTimer = setTimeout(() => arrowCenter.classList.remove('flash'), 120);
+    }
+
+    // --- イベントリスナー ---
+    startStopBtn.addEventListener('click', () => {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+        isPlaying = !isPlaying;
+
+        if (isPlaying) {
+            restartSequence();
+        } else {
+            clearTimeout(timerID);
+            startStopBtn.innerText = 'START';
+            startStopBtn.classList.remove('stop');
+            stopSwing();
+        }
+    });
+
+    tempoSlider.addEventListener('input', (e) => {
+        tempo = parseInt(e.target.value);
+        bpmDisplay.innerText = tempo;
+        updateTempoText(tempo);
+        if (isPlaying && audioCtx) restartSequence();
+    });
+
+    markingSelect.addEventListener('change', (e) => {
+        if (e.target.value) {
+            tempo = parseInt(e.target.value);
+            tempoSlider.value = tempo;
+            bpmDisplay.innerText = tempo;
+            updateTempoText(tempo);
+            if (isPlaying && audioCtx) restartSequence();
+        }
+    });
+
+    timeSigSelect.addEventListener('change', (e) => {
+        beatsPerBar = parseInt(e.target.value);
+        initDots();
+    });
+
+    subdivisionSelect.addEventListener('change', (e) => {
+        subdivision = parseInt(e.target.value);
+    });
+
+    // 初期化
+    initDots();
+    updateTempoText(120);
+    updatePendulumTiming();
+
+</script>
+
+</body>
+</html>
