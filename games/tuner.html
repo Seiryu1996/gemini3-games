@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>高精度・多機能アナログチューナー</title>
+    <style>
+        :root {
+            --bg-color: #f4f7f9;
+            --panel-color: #ffffff;
+            --text-color: #2c3e50;
+            --accent-blue: #3498db;
+            --accent-green: #2ecc71;
+            --accent-red: #e74c3c;
+            --border-color: #dcdde1;
+        }
+
+        body {
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+        }
+
+        /* 戻るボタン（共通UI） */
+        .back-btn {
+            position: fixed;
+            top: 14px;
+            left: 14px;
+            z-index: 200;
+            padding: 10px 14px;
+            border-radius: 12px;
+            background: rgba(0,0,0,0.6);
+            color: #0ff;
+            border: 1px solid rgba(0,255,255,0.6);
+            text-decoration: none;
+            font-weight: 700;
+            letter-spacing: 1px;
+            box-shadow: 0 0 10px rgba(0,255,255,0.4);
+            pointer-events: auto;
+        }
+        .back-btn:hover { background: rgba(0,255,255,0.12); }
+
+        .tuner-container {
+            background: var(--panel-color);
+            padding: 30px;
+            border-radius: 24px;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.1);
+            width: 100%;
+            max-width: 450px;
+            text-align: center;
+        }
+
+        h1 { font-size: 1.2rem; margin-bottom: 20px; opacity: 0.7; }
+
+        .note-display {
+            font-size: 5rem;
+            font-weight: 800;
+            margin: 10px 0;
+            line-height: 1;
+            height: 100px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.05);
+        }
+
+        .meter-area {
+            position: relative;
+            width: 100%;
+            height: 180px;
+        }
+
+        canvas {
+            width: 100%;
+            height: 100%;
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            margin: 15px 0;
+            font-family: monospace;
+            font-size: 1rem;
+            color: #7f8c8d;
+        }
+
+        .control-panel {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-top: 20px;
+            text-align: left;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        label {
+            font-size: 0.75rem;
+            font-weight: bold;
+            color: #95a5a6;
+            margin-bottom: 5px;
+            text-transform: uppercase;
+        }
+
+        select, input[type="number"] {
+            padding: 10px;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            font-size: 0.9rem;
+            outline: none;
+            transition: border 0.2s;
+        }
+
+        select:focus, input:focus { border-color: var(--accent-blue); }
+
+        .button-stack {
+            grid-column: span 2;
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        button {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            border-radius: 10px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 0.9rem;
+        }
+
+        .btn-mic { background: var(--accent-blue); color: white; }
+        .btn-sound { background: var(--accent-green); color: white; }
+        .btn-active { filter: brightness(0.8); box-shadow: inset 0 2px 5px rgba(0,0,0,0.2); }
+        .btn-stop { background: var(--accent-red) !important; color: white; }
+
+        .sensitivity-slider {
+            grid-column: span 2;
+            margin-top: 10px;
+        }
+
+        input[type="range"] { width: 100%; }
+    </style>
+</head>
+<body>
+
+<a href="../index.html" class="back-btn">← BACK</a>
+
+<div class="tuner-container">
+    <h1>INSTRUMENT TUNER</h1>
+
+    <div id="note-name" class="note-display">--</div>
+    
+    <div class="meter-area">
+        <canvas id="tunerMeter"></canvas>
+    </div>
+
+    <div class="info-row">
+        <span id="hz-display">0.00 Hz</span>
+        <span id="cent-display">0 cents</span>
+    </div>
+
+    <div class="control-panel">
+        <!-- 基準設定 -->
+        <div class="control-group">
+            <label>基準ピッチ (A4)</label>
+            <input type="number" id="base-pitch" value="442" min="430" max="450" step="1">
+        </div>
+        <div class="control-group">
+            <label>解析感度</label>
+            <input type="range" id="sensitivity" min="1" max="100" value="25">
+        </div>
+
+        <!-- 基準音出力設定 -->
+        <div class="control-group">
+            <label>基準音の音名</label>
+            <select id="ref-note">
+                <option value="0">C (ド)</option>
+                <option value="1">C#</option>
+                <option value="2">D (レ)</option>
+                <option value="3">D#</option>
+                <option value="4">E (ミ)</option>
+                <option value="5">F (ファ)</option>
+                <option value="6">F#</option>
+                <option value="7">G (ソ)</option>
+                <option value="8">G#</option>
+                <option value="9" selected>A (ラ)</option>
+                <option value="10">A#</option>
+                <option value="11">B (シ)</option>
+            </select>
+        </div>
+        <div class="control-group">
+            <label>オクターブ</label>
+            <select id="ref-octave">
+                <option value="2">2 (低)</option>
+                <option value="3">3</option>
+                <option value="4" selected>4 (標準)</option>
+                <option value="5">5 (高)</option>
+            </select>
+        </div>
+
+        <div class="button-stack">
+            <button id="mic-btn" class="btn-mic">マイク入力開始</button>
+            <button id="sound-btn" class="btn-sound">基準音を鳴らす</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    const noteStrings = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+    let audioCtx = null;
+    let analyser = null;
+    let micSource = null;
+    let oscillator = null;
+    let isListening = false;
+    let isPlaying = false;
+
+    let currentCents = 0;
+    let targetCents = 0;
+
+    const canvas = document.getElementById('tunerMeter');
+    const ctx = canvas.getContext('2d');
+    const noteEl = document.getElementById('note-name');
+    const hzEl = document.getElementById('hz-display');
+    const centEl = document.getElementById('cent-display');
+    const basePitchInput = document.getElementById('base-pitch');
+
+    // --- メーター描画 ---
+    function draw() {
+        const w = canvas.width / window.devicePixelRatio;
+        const h = canvas.height / window.devicePixelRatio;
+        const centerX = w / 2;
+        const centerY = h - 30;
+        const radius = h - 60;
+
+        ctx.clearRect(0, 0, w, h);
+
+        // 目盛り盤の弧
+        ctx.beginPath();
+        ctx.strokeStyle = '#e0e0e0';
+        ctx.lineWidth = 3;
+        ctx.arc(centerX, centerY, radius, Math.PI * 1.1, Math.PI * 1.9);
+        ctx.stroke();
+
+        // 目盛りの描画
+        for (let i = -50; i <= 50; i += 5) {
+            const angle = Math.PI * 1.5 + (i * (Math.PI * 0.8 / 100));
+            const isMajor = i % 10 === 0;
+            const len = isMajor ? 15 : 8;
+            
+            ctx.beginPath();
+            ctx.strokeStyle = (i === 0) ? varColor('--accent-green') : '#bdc3c7';
+            ctx.lineWidth = isMajor ? 2 : 1;
+            ctx.moveTo(centerX + radius * Math.cos(angle), centerY + radius * Math.sin(angle));
+            ctx.lineTo(centerX + (radius - len) * Math.cos(angle), centerY + (radius - len) * Math.sin(angle));
+            ctx.stroke();
+
+            if (isMajor) {
+                ctx.fillStyle = '#95a5a6';
+                ctx.font = '10px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(i, centerX + (radius - 25) * Math.cos(angle), centerY + (radius - 25) * Math.sin(angle) + 5);
+            }
+        }
+
+        // 針の計算（滑らかに）
+        currentCents += (targetCents - currentCents) * 0.2;
+        const needleAngle = Math.PI * 1.5 + (currentCents * (Math.PI * 0.8 / 100));
+
+        ctx.save();
+        ctx.translate(centerX, centerY);
+        ctx.rotate(needleAngle + Math.PI / 2);
+        
+        // 針の色
+        ctx.strokeStyle = Math.abs(currentCents) < 3 ? varColor('--accent-green') : varColor('--accent-red');
+        ctx.lineWidth = 3;
+        ctx.shadowBlur = 5;
+        ctx.shadowColor = ctx.strokeStyle;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(0, -radius + 5);
+        ctx.stroke();
+        ctx.restore();
+
+        // 中心点
+        ctx.beginPath();
+        ctx.fillStyle = varColor('--text-color');
+        ctx.arc(centerX, centerY, 5, 0, Math.PI * 2);
+        ctx.fill();
+
+        requestAnimationFrame(draw);
+    }
+
+    function varColor(name) {
+        return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    }
+
+    // --- ピッチ解析 ---
+    function autoCorrelate(buffer, sampleRate) {
+        let size = buffer.length;
+        let rms = 0;
+        for (let i = 0; i < size; i++) rms += buffer[i] * buffer[i];
+        rms = Math.sqrt(rms / size);
+        if (rms < (document.getElementById('sensitivity').value / 1000)) return -1;
+
+        let r1 = 0, r2 = size - 1, thres = 0.2;
+        for (let i = 0; i < size / 2; i++) if (Math.abs(buffer[i]) < thres) { r1 = i; break; }
+        for (let i = 1; i < size / 2; i++) if (Math.abs(buffer[size - i]) < thres) { r2 = size - i; break; }
+        buffer = buffer.slice(r1, r2);
+        size = buffer.length;
+
+        let c = new Array(size).fill(0);
+        for (let i = 0; i < size; i++)
+            for (let j = 0; j < size - i; j++)
+                c[i] = c[i] + buffer[j] * buffer[j + i];
+
+        let d = 0; while (c[d] > c[d + 1]) d++;
+        let maxval = -1, maxpos = -1;
+        for (let i = d; i < size; i++) {
+            if (c[i] > maxval) { maxval = c[i]; maxpos = i; }
+        }
+        return sampleRate / maxpos;
+    }
+
+    function updatePitch() {
+        if (!isListening) return;
+        const buffer = new Float32Array(2048);
+        analyser.getFloatTimeDomainData(buffer);
+        const freq = autoCorrelate(buffer, audioCtx.sampleRate);
+
+        if (freq !== -1) {
+            const baseA = parseFloat(basePitchInput.value);
+            const step = 12 * (Math.log(freq / baseA) / Math.log(2));
+            const noteIndex = Math.round(step) + 69;
+            const cents = (step - Math.round(step)) * 100;
+
+            noteEl.innerText = noteStrings[noteIndex % 12];
+            hzEl.innerText = freq.toFixed(2) + " Hz";
+            centEl.innerText = (cents > 0 ? "+" : "") + cents.toFixed(1) + " cents";
+            targetCents = cents;
+        } else {
+            targetCents = 0; // 無音時は中央
+        }
+        setTimeout(updatePitch, 50);
+    }
+
+    // --- 音声出力（基準音） ---
+    function calculateFrequency(noteIdx, octave, baseA) {
+        // MIDI番号を計算 (C4 は 60, A4 は 69)
+        const midi = (parseInt(octave) + 1) * 12 + parseInt(noteIdx);
+        // A4(69)からの半音距離に基づき計算
+        return baseA * Math.pow(2, (midi - 69) / 12);
+    }
+
+    function toggleReferenceSound() {
+        audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+        
+        if (isPlaying) {
+            oscillator.stop();
+            isPlaying = false;
+            document.getElementById('sound-btn').innerText = "基準音を鳴らす";
+            document.getElementById('sound-btn').classList.remove('btn-stop');
+        } else {
+            oscillator = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            
+            const note = document.getElementById('ref-note').value;
+            const octave = document.getElementById('ref-octave').value;
+            const baseA = parseFloat(basePitchInput.value);
+            
+            oscillator.frequency.value = calculateFrequency(note, octave, baseA);
+            oscillator.type = 'sine'; // 耳に優しいサイン波
+            
+            gain.gain.setValueAtTime(0, audioCtx.currentTime);
+            gain.gain.linearRampToValueAtTime(0.1, audioCtx.currentTime + 0.1); // フェードイン
+            
+            oscillator.connect(gain);
+            gain.connect(audioCtx.destination);
+            
+            oscillator.start();
+            isPlaying = true;
+            document.getElementById('sound-btn').innerText = "音を止める";
+            document.getElementById('sound-btn').classList.add('btn-stop');
+        }
+    }
+
+    // --- イベント設定 ---
+    document.getElementById('mic-btn').addEventListener('click', async () => {
+        if (isListening) {
+            isListening = false;
+            document.getElementById('mic-btn').innerText = "マイク入力開始";
+            document.getElementById('mic-btn').classList.remove('btn-stop');
+            return;
+        }
+
+        audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            analyser = audioCtx.createAnalyser();
+            analyser.fftSize = 2048;
+            micSource = audioCtx.createMediaStreamSource(stream);
+            micSource.connect(analyser);
+            isListening = true;
+            document.getElementById('mic-btn').innerText = "マイクを停止";
+            document.getElementById('mic-btn').classList.add('btn-stop');
+            updatePitch();
+        } catch (e) {
+            alert("マイクへのアクセスを許可してください");
+        }
+    });
+
+    document.getElementById('sound-btn').addEventListener('click', toggleReferenceSound);
+
+    // 鳴らしている最中に設定を変えたら反映させる
+    const updateRefSound = () => {
+        if (isPlaying && oscillator) {
+            const note = document.getElementById('ref-note').value;
+            const octave = document.getElementById('ref-octave').value;
+            const baseA = parseFloat(basePitchInput.value);
+            oscillator.frequency.setTargetAtTime(calculateFrequency(note, octave, baseA), audioCtx.currentTime, 0.05);
+        }
+    };
+
+    document.getElementById('ref-note').addEventListener('change', updateRefSound);
+    document.getElementById('ref-octave').addEventListener('change', updateRefSound);
+    basePitchInput.addEventListener('input', updateRefSound);
+
+    // キャンバス初期化
+    function initCanvas() {
+        const ratio = window.devicePixelRatio || 1;
+        canvas.width = canvas.clientWidth * ratio;
+        canvas.height = canvas.clientHeight * ratio;
+        ctx.scale(ratio, ratio);
+        draw();
+    }
+    window.addEventListener('resize', initCanvas);
+    initCanvas();
+
+</script>
+
+</body>
+</html>
