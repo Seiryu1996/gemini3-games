@@ -119,6 +119,24 @@
             padding: 10px;
             border-left: 4px solid var(--accent);
         }
+
+        .back-btn {
+            position: fixed;
+            top: 14px;
+            left: 14px;
+            z-index: 10;
+            padding: 10px 14px;
+            border-radius: 12px;
+            background: rgba(0, 0, 0, 0.6);
+            color: #0ff;
+            border: 1px solid rgba(0, 255, 255, 0.6);
+            text-decoration: none;
+            font-weight: 700;
+            letter-spacing: 1px;
+            box-shadow: 0 0 10px rgba(0, 255, 255, 0.4);
+        }
+
+        .back-btn:hover { background: rgba(0, 255, 255, 0.12); }
     </style>
 </head>
 <body>
@@ -152,6 +170,8 @@
         <b>使い方:</b> 自分の楽譜にある音をタップしてください。たとえばE♭管で「ド」と「ソ」を押すと、実音の「E♭」と「B♭」として計算され、和音「E♭」が表示されます。
     </div>
 </div>
+
+<a class="back-btn" href="../index.html">← HUB</a>
 
 <script>
     const solfegeNames = ["ド", "ド#", "レ", "レ#", "ミ", "ファ", "ファ#", "ソ", "ソ#", "ラ", "シ♭", "シ"];
