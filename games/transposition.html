@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>吹奏楽・移調アシスタント</title>
+    <style>
+        :root {
+            --bg: #f0f2f5;
+            --card: #ffffff;
+            --source: #3498db; /* 青: 元の楽譜 */
+            --concert: #e74c3c; /* 赤: 実音 */
+            --target: #f39c12; /* 橙: 自分の指 */
+            --border: #dcdde1;
+        }
+
+        body {
+            font-family: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", "Hiragino Sans", Meiryo, sans-serif;
+            background-color: var(--bg);
+            margin: 0;
+            padding: 10px;
+            display: flex;
+            justify-content: center;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 480px;
+            background: var(--card);
+            padding: 20px;
+            border-radius: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+
+        /* 楽器設定エリア */
+        .settings {
+            display: grid;
+            grid-template-columns: 1fr 30px 1fr;
+            align-items: center;
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+        }
+
+        .set-group { display: flex; flex-direction: column; }
+        .set-group label { font-size: 0.7rem; font-weight: bold; color: #7f8c8d; margin-bottom: 4px; }
+        select {
+            padding: 8px;
+            border-radius: 6px;
+            border: 2px solid var(--border);
+            font-size: 0.85rem;
+            background: white;
+        }
+
+        /* 変換結果エリア（スクロール） */
+        .result-scroll {
+            display: flex;
+            overflow-x: auto;
+            gap: 8px;
+            padding: 15px 5px;
+            background: #2c3e50;
+            border-radius: 15px;
+            min-height: 160px;
+            margin-bottom: 20px;
+            scroll-behavior: smooth;
+        }
+
+        .empty-msg {
+            color: #95a5a6;
+            width: 100%;
+            text-align: center;
+            line-height: 130px;
+            font-size: 0.9rem;
+        }
+
+        /* ノートカードのスタイル */
+        .note-card {
+            flex: 0 0 75px;
+            background: white;
+            border-radius: 10px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            text-align: center;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+            animation: popIn 0.2s ease-out;
+        }
+
+        @keyframes popIn {
+            from { transform: scale(0.8); opacity: 0; }
+            to { transform: scale(1); opacity: 1; }
+        }
+
+        .val-box { padding: 8px 0; font-weight: bold; }
+        .label-sub { font-size: 0.6rem; display: block; opacity: 0.7; font-weight: normal; margin-bottom: 2px; }
+
+        .src-val { background: var(--source); color: white; font-size: 1.1rem; }
+        .cnt-val { background: white; color: var(--concert); font-size: 1.2rem; border-bottom: 1px solid #eee; border-top: 1px solid #eee; }
+        .trg-val { background: var(--target); color: white; font-size: 1.1rem; }
+
+        /* キーボード */
+        .keyboard {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+        }
+
+        .note-btn {
+            padding: 10px 0;
+            border: 2px solid var(--border);
+            background: white;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: 0.1s;
+        }
+
+        .note-btn:active { background: #eee; transform: translateY(2px); }
+        .btn-written { font-size: 1.1rem; font-weight: bold; display: block; }
+        .btn-concert { font-size: 0.65rem; color: var(--concert); display: block; }
+
+        .controls {
+            margin-top: 15px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        .btn-action {
+            padding: 12px;
+            border: none;
+            border-radius: 10px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        .btn-del { background: #dcdde1; color: #2c3e50; }
+        .btn-clr { background: #e74c3c; color: white; }
+
+        .hint {
+            margin-top: 15px;
+            font-size: 0.75rem;
+            color: #7f8c8d;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="settings">
+        <div class="set-group">
+            <label>楽譜の楽器</label>
+            <select id="source-inst">
+                <option value="3" selected>E♭管 (アルト等)</option>
+                <option value="-2">B♭管 (クラリ等)</option>
+                <option value="-7">F管 (ホルン等)</option>
+                <option value="0">C管 (フルート等)</option>
+            </select>
+        </div>
+        <div style="text-align: center; padding-top: 15px; color: #bdc3c7;">▶</div>
+        <div class="set-group">
+            <label>自分の楽器</label>
+            <select id="target-inst">
+                <option value="-2" selected>B♭管 (クラリ等)</option>
+                <option value="3">E♭管 (アルト等)</option>
+                <option value="-7">F管 (ホルン等)</option>
+                <option value="0">C管 (フルート等)</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- 垂直比較カードの表示エリア -->
+    <div class="result-scroll" id="result-scroll">
+        <div class="empty-msg">楽譜の音をタップしてください</div>
+    </div>
+
+    <!-- キーボードエリア -->
+    <div class="keyboard" id="keyboard"></div>
+
+    <div class="controls">
+        <button class="btn-action btn-del" id="del-btn">1つ消す</button>
+        <button class="btn-action btn-clr" id="clr-btn">リセット</button>
+    </div>
+
+    <div class="hint">
+        例：E♭管で「ド」を押すと、実音「E♭」、B♭管の指は「ファ」と表示されます。
+    </div>
+</div>
+
+<script>
+    const solfegeNames = ["ド", "ド#", "レ", "レ#", "ミ", "ファ", "ファ#", "ソ", "ソ#", "ラ", "シ♭", "シ"];
+    const concertNames = ["C", "C#", "D", "E♭", "E", "F", "F#", "G", "A♭", "A", "B♭", "B"];
+    
+    let noteHistory = [];
+
+    const keyboard = document.getElementById('keyboard');
+    const scrollArea = document.getElementById('result-scroll');
+    const sourceSelect = document.getElementById('source-inst');
+    const targetSelect = document.getElementById('target-inst');
+
+    // ボタンUI更新：設定によってボタン内の実音表示を変える
+    function updateKeyboard() {
+        keyboard.innerHTML = '';
+        const sourceOffset = parseInt(sourceSelect.value);
+        
+        solfegeNames.forEach((name, index) => {
+            const concertIdx = (index + sourceOffset + 12) % 12;
+            const concertName = concertNames[concertIdx];
+
+            const btn = document.createElement('button');
+            btn.className = 'note-btn';
+            btn.innerHTML = `
+                <span class="btn-written">${name}</span>
+                <span class="btn-concert">実音:${concertName}</span>
+            `;
+            btn.onclick = () => {
+                noteHistory.push(index);
+                renderCards();
+            };
+            keyboard.appendChild(btn);
+        });
+    }
+
+    // メイン描画処理
+    function renderCards() {
+        if (noteHistory.length === 0) {
+            scrollArea.innerHTML = '<div class="empty-msg">楽譜の音をタップしてください</div>';
+            return;
+        }
+
+        const sourceOffset = parseInt(sourceSelect.value);
+        const targetOffset = parseInt(targetSelect.value);
+
+        scrollArea.innerHTML = '';
+        
+        noteHistory.forEach(idx => {
+            // 1. 実音(コンサートピッチ)の算出
+            const concertIdx = (idx + sourceOffset + 12) % 12;
+            // 2. 移調先楽器での音名(指使い)の算出
+            const targetIdx = (concertIdx - targetOffset + 12) % 12;
+
+            const card = document.createElement('div');
+            card.className = 'note-card';
+            card.innerHTML = `
+                <div class="val-box src-val"><span class="label-sub">楽譜</span>${solfegeNames[idx]}</div>
+                <div class="val-box cnt-val"><span class="label-sub">実音</span>${concertNames[concertIdx]}</div>
+                <div class="val-box trg-val"><span class="label-sub">吹く音</span>${solfegeNames[targetIdx]}</div>
+            `;
+            scrollArea.appendChild(card);
+        });
+
+        // 常に最新の入力を表示
+        scrollArea.scrollLeft = scrollArea.scrollWidth;
+    }
+
+    // イベント
+    sourceSelect.onchange = () => {
+        updateKeyboard();
+        renderCards();
+    };
+    targetSelect.onchange = renderCards;
+
+    document.getElementById('del-btn').onclick = () => {
+        noteHistory.pop();
+        renderCards();
+    };
+
+    document.getElementById('clr-btn').onclick = () => {
+        noteHistory = [];
+        renderCards();
+    };
+
+    // 初期化
+    updateKeyboard();
+
+</script>
+</body>
+</html>
