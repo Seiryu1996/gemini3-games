@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>吹奏楽ハーモニー解析ツール</title>
+    <style>
+        :root {
+            --bg: #f8f9fa;
+            --panel: #ffffff;
+            --primary: #2c3e50;
+            --accent: #d35400;
+            --note-on: #3498db;
+            --concert-color: #e74c3c;
+        }
+
+        body {
+            font-family: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", "Hiragino Sans", Meiryo, sans-serif;
+            background-color: var(--bg);
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            padding: 15px;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 500px;
+            background: var(--panel);
+            padding: 20px;
+            border-radius: 20px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+        }
+
+        /* 結果表示エリア */
+        .chord-monitor {
+            background: var(--primary);
+            color: white;
+            padding: 25px;
+            border-radius: 15px;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        #chord-name { font-size: 3.5rem; font-weight: bold; display: block; }
+        #note-details { font-size: 1rem; color: #bdc3c7; margin-top: 10px; line-height: 1.5; }
+
+        /* 設定エリア */
+        .settings {
+            background: #f1f2f6;
+            padding: 15px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+        }
+
+        label { display: block; font-size: 0.85rem; font-weight: bold; margin-bottom: 8px; color: #57606f; }
+        select {
+            width: 100%;
+            padding: 12px;
+            border-radius: 8px;
+            border: 2px solid #ccc;
+            font-size: 1rem;
+            background: white;
+        }
+
+        /* 入力エリア（ドレミキーボード） */
+        .keyboard {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+        }
+
+        .note-btn {
+            padding: 15px 5px;
+            border: 2px solid #dcdde1;
+            background: white;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: 0.1s;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .note-btn.active {
+            background: var(--note-on);
+            border-color: var(--note-on);
+            color: white;
+        }
+
+        .written-name { font-size: 1.2rem; font-weight: bold; }
+        .concert-name { font-size: 0.75rem; margin-top: 4px; color: #7f8c8d; }
+        .note-btn.active .concert-name { color: #e0e0e0; }
+
+        /* 特殊ボタン */
+        .actions {
+            margin-top: 20px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        .btn {
+            padding: 15px;
+            border: none;
+            border-radius: 10px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        .btn-clear { background: #dcdde1; color: #2f3542; }
+        .btn-mic { background: var(--accent); color: white; }
+
+        .desc {
+            margin-top: 20px;
+            font-size: 0.8rem;
+            color: #7f8c8d;
+            background: #fff9f0;
+            padding: 10px;
+            border-left: 4px solid var(--accent);
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="chord-monitor">
+        <span id="chord-name">?</span>
+        <div id="note-details">和音の構成音が表示されます</div>
+    </div>
+
+    <div class="settings">
+        <label>あなたの楽器（楽譜の読み）</label>
+        <select id="transposition">
+            <option value="0">C管 (フルート, オーボエ, ピアノ, C管Tp)</option>
+            <option value="-2" selected>B♭管 (クラリネット, B♭管Tp, テナーサックス)</option>
+            <option value="3">E♭管 (アルトサックス, バリトンサックス, E♭管Cl)</option>
+            <option value="-7">F管 (ホルン)</option>
+        </select>
+    </div>
+
+    <div class="keyboard" id="keyboard">
+        <!-- JSで生成 -->
+    </div>
+
+    <div class="actions">
+        <button class="btn btn-clear" id="clear-btn">全部消す</button>
+        <button class="btn btn-mic" id="mic-btn">マイクで拾う</button>
+    </div>
+
+    <div class="desc">
+        <b>使い方:</b> 自分の楽譜にある音をタップしてください。たとえばE♭管で「ド」と「ソ」を押すと、実音の「E♭」と「B♭」として計算され、和音「E♭」が表示されます。
+    </div>
+</div>
+
+<script>
+    const solfegeNames = ["ド", "ド#", "レ", "レ#", "ミ", "ファ", "ファ#", "ソ", "ソ#", "ラ", "シ♭", "シ"];
+    const concertEnglishNames = ["C", "C#", "D", "E♭", "E", "F", "F#", "G", "A♭", "A", "B♭", "B"];
+    
+    // 和音判定用
+    const chordLib = {
+        "4,7": "", "3,7": "m", "4,7,10": "7", "4,7,11": "M7", "3,7,10": "m7",
+        "4,8": "aug", "3,6": "dim", "2,7": "sus4", "5,7": "sus4", "4,7,9": "6"
+    };
+
+    let selectedWrittenNotes = new Set();
+    let isMicOn = false;
+    let audioCtx = null;
+    let analyser = null;
+    let animationId = null;
+
+    const keyboard = document.getElementById('keyboard');
+    const transSelect = document.getElementById('transposition');
+
+    // キーボード生成
+    function createKeyboard() {
+        keyboard.innerHTML = '';
+        const offset = parseInt(transSelect.value);
+
+        solfegeNames.forEach((name, index) => {
+            const concertIndex = (index + offset + 12) % 12;
+            const concertName = concertEnglishNames[concertIndex];
+
+            const btn = document.createElement('button');
+            btn.className = 'note-btn';
+            if (selectedWrittenNotes.has(index)) btn.classList.add('active');
+            
+            btn.innerHTML = `
+                <span class="written-name">${name}</span>
+                <span class="concert-name">実音: ${concertName}</span>
+            `;
+
+            btn.onclick = () => {
+                if (selectedWrittenNotes.has(index)) {
+                    selectedWrittenNotes.delete(index);
+                } else {
+                    selectedWrittenNotes.add(index);
+                }
+                updateUI();
+            };
+            keyboard.appendChild(btn);
+        });
+    }
+
+    function updateUI() {
+        const offset = parseInt(transSelect.value);
+        const concertIndices = Array.from(selectedWrittenNotes)
+                                     .map(i => (i + offset + 12) % 12)
+                                     .sort((a, b) => a - b);
+
+        createKeyboard(); // ボタン内の「実音表示」を更新するため再描画
+
+        if (concertIndices.length === 0) {
+            document.getElementById('chord-name').innerText = "?";
+            document.getElementById('note-details').innerText = "音を選択してください";
+            return;
+        }
+
+        // コード判定
+        const root = concertIndices[0];
+        const intervals = concertIndices.slice(1).map(n => (n - root + 12) % 12).sort((a,b)=>a-b);
+        const type = chordLib[intervals.join(',')] ?? (concertIndices.length > 1 ? "..." : "");
+        
+        document.getElementById('chord-name').innerText = concertEnglishNames[root] + type;
+        
+        // 詳細表示
+        const writtenList = Array.from(selectedWrittenNotes).map(i => solfegeNames[i]).join(', ');
+        const concertList = concertIndices.map(i => concertEnglishNames[i]).join(', ');
+        document.getElementById('note-details').innerHTML = 
+            `楽譜: ${writtenList}<br><span style="color:#e74c3c">実音: ${concertList}</span>`;
+    }
+
+    // --- マイク解析（簡易版） ---
+    async function startMic() {
+        audioCtx = audioCtx || new AudioContext();
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const source = audioCtx.createMediaStreamSource(stream);
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 4096;
+        source.connect(analyser);
+        isMicOn = true;
+        document.getElementById('mic-btn').innerText = "停止";
+        
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        const loop = () => {
+            if (!isMicOn) return;
+            analyser.getByteFrequencyData(dataArray);
+            const energies = new Float32Array(12).fill(0);
+            for (let i = 0; i < dataArray.length; i++) {
+                const freq = i * audioCtx.sampleRate / analyser.fftSize;
+                if (freq < 100 || freq > 2000) continue;
+                const note = Math.floor(12 * Math.log2(freq / 440) + 69) % 12;
+                energies[note] += dataArray[i];
+            }
+            const max = Math.max(...energies);
+            if (max > 500) {
+                const detected = [];
+                energies.forEach((e, i) => { if (e > max * 0.7) detected.push(i); });
+                const root = detected[0];
+                const type = chordLib[detected.slice(1).map(n=>(n-root+12)%12).sort((a,b)=>a-b).join(',')] || "";
+                document.getElementById('chord-name').innerText = concertEnglishNames[root] + type;
+                document.getElementById('note-details').innerText = "マイク解析中...";
+            }
+            animationId = requestAnimationFrame(loop);
+        };
+        loop();
+    }
+
+    // 初期化
+    transSelect.onchange = () => {
+        // 楽器を変えたら、実音の表示だけ更新する（選択中の音は維持）
+        updateUI();
+    };
+
+    document.getElementById('clear-btn').onclick = () => {
+        selectedWrittenNotes.clear();
+        updateUI();
+    };
+
+    document.getElementById('mic-btn').onclick = () => {
+        if (isMicOn) {
+            isMicOn = false;
+            cancelAnimationFrame(animationId);
+            document.getElementById('mic-btn').innerText = "マイクで拾う";
+        } else {
+            startMic();
+        }
+    };
+
+    createKeyboard();
+    updateUI();
+
+</script>
+</body>
+</html>
