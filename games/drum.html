@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>究極・太鼓リズム PRO</title>
+    <style>
+        :root {
+            --don-red: #ff4500;
+            --ka-blue: #1e90ff;
+            --taiko-body: #fdf5e6;
+            --super-oni-color: #ff00ff;
+        }
+
+        body {
+            margin: 0;
+            background-color: #111;
+            color: white;
+            font-family: 'Hiragino Kaku Gothic ProN', sans-serif;
+            overflow: hidden;
+            touch-action: none;
+            user-select: none;
+        }
+
+        /* 背景 */
+        #bg-pattern {
+            position: fixed;
+            inset: 0;
+            background: linear-gradient(45deg, #222 25%, #111 25%, #111 50%, #222 50%, #222 75%, #111 75%, #111 100%);
+            background-size: 50px 50px;
+            opacity: 0.2;
+            z-index: -1;
+        }
+
+        /* セットアップ画面 */
+        #setup-screen {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.95);
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+        }
+
+        .btn {
+            background: var(--don-red);
+            color: white;
+            padding: 15px 50px;
+            border-radius: 50px;
+            border: 4px solid white;
+            font-size: 24px;
+            font-weight: bold;
+            margin: 15px;
+            cursor: pointer;
+            box-shadow: 0 6px 0 #800;
+            transition: transform 0.1s;
+        }
+        .btn:active { transform: translateY(4px); box-shadow: none; }
+
+        .difficulty-btns { display: flex; gap: 10px; margin: 20px 0; flex-wrap: wrap; justify-content: center; }
+        .diff-btn {
+            padding: 12px 24px;
+            border-radius: 12px;
+            border: 2px solid #555;
+            background: #333;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        .diff-easy { border-color: #4caf50; }
+        .diff-normal { border-color: #ff9800; }
+        .diff-hard { border-color: #f44336; }
+        .diff-super { 
+            display: none; 
+            background: black; 
+            border: 3px solid var(--super-oni-color); 
+            color: var(--super-oni-color);
+            animation: flash 0.5s infinite alternate;
+        }
+        @keyframes flash { from { opacity: 0.5; } to { opacity: 1; } }
+        .diff-selected { background: white !important; color: black !important; transform: scale(1.1); }
+
+        /* ゲーム画面 */
+        #game-container {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #info-bar {
+            height: 50px;
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+            background: #000;
+            font-weight: bold;
+        }
+
+        /* 譜面エリア */
+        #lane-container {
+            position: relative;
+            height: 140px;
+            background: #222;
+            border-top: 5px solid #ffcc00;
+            border-bottom: 5px solid #ffcc00;
+            overflow: hidden;
+        }
+
+        #judge-circle {
+            position: absolute;
+            left: 80px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 90px;
+            height: 90px;
+            border: 6px solid rgba(255,255,255,0.8);
+            border-radius: 50%;
+            z-index: 10;
+        }
+
+        /* 巨大太鼓エリア */
+        #controller {
+            flex-grow: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #1a1a1a;
+        }
+
+        .taiko-wrapper {
+            position: relative;
+            width: 85vw; /* 画面幅いっぱい近く */
+            height: 85vw;
+            max-width: 450px;
+            max-height: 450px;
+        }
+
+        #rim {
+            position: absolute;
+            width: 100%; height: 100%;
+            background: var(--ka-blue);
+            border-radius: 50%;
+            border: 10px solid #222;
+            box-shadow: 0 15px 0 #004080;
+            transition: transform 0.05s;
+        }
+
+        #surface {
+            position: absolute;
+            inset: 12%;
+            background: var(--taiko-body);
+            border-radius: 50%;
+            border: 8px solid #ddd;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 30px;
+            color: #888;
+            font-weight: bold;
+            box-shadow: inset 0 0 30px rgba(0,0,0,0.1);
+            transition: transform 0.05s;
+        }
+
+        .hit-don { transform: scale(0.92) !important; background: #ffcccc !important; }
+        .hit-ka { transform: scale(0.96) !important; background: #b3d9ff !important; }
+
+        #judge-popup {
+            position: absolute;
+            left: 85px; top: 10px;
+            font-size: 32px; font-weight: bold;
+            pointer-events: none; opacity: 0;
+            text-shadow: 2px 2px 0 #000;
+        }
+
+        @keyframes pop {
+            0% { opacity: 1; transform: scale(0.5); }
+            50% { opacity: 1; transform: scale(1.2); }
+            100% { opacity: 0; transform: translateY(-40px); }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="bg-pattern"></div>
+
+    <div id="setup-screen">
+        <h1 id="title">究極・太鼓リズム PRO</h1>
+        <p>PC: [F][J]=ドン [D][K]=カッ<br>スマホ: 太鼓を直接タップ</p>
+        
+        <input type="file" id="file-input" accept="audio/*" style="display:none">
+        <label for="file-input" class="btn">曲を読み込む</label>
+        
+        <div id="file-name" style="margin-bottom:10px; color:#ffcc00;"></div>
+
+        <div class="difficulty-btns">
+            <button class="diff-btn diff-easy" data-diff="easy">かんたん</button>
+            <button class="diff-btn diff-normal diff-selected" data-diff="normal">ふつう</button>
+            <button class="diff-btn diff-hard" id="oni-btn" data-diff="hard">おに</button>
+            <button class="diff-btn diff-super" id="super-oni-btn" data-diff="super">超・おに</button>
+        </div>
+
+        <button id="start-btn" class="btn" style="background:#fff; color:#000; display:none;">演奏開始！</button>
+        <div id="loading-msg" style="display:none; color:cyan;">解析中...</div>
+    </div>
+
+    <div id="game-container">
+        <div id="info-bar">
+            <div id="combo">0 COMBO</div>
+            <div id="score">0000000</div>
+        </div>
+        <div id="lane-container">
+            <div id="judge-circle"></div>
+            <div id="judge-popup">良</div>
+            <canvas id="game-canvas"></canvas>
+        </div>
+        <div id="controller">
+            <div class="taiko-wrapper">
+                <div id="rim"></div>
+                <div id="surface">ドン</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('game-canvas');
+        const ctx = canvas.getContext('2d');
+        let audioCtx, audioBuffer, sourceNode;
+        let notes = [];
+        let isPlaying = false;
+        let startTime = 0;
+        let score = 0;
+        let combo = 0;
+        let currentDiff = 'normal';
+        let oniClickCount = 0;
+
+        const DIFF_SETTINGS = {
+            easy:   { threshold: 0.28, minGap: 0.7, speed: 4, kaRate: 0.1 },
+            normal: { threshold: 0.20, minGap: 0.35, speed: 6, kaRate: 0.25 },
+            hard:   { threshold: 0.14, minGap: 0.18, speed: 9, kaRate: 0.4 },
+            super:  { threshold: 0.06, minGap: 0.08, speed: 13, kaRate: 0.5 } // 超密着・超高速
+        };
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = 140;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // 隠し要素の解禁
+        document.getElementById('oni-btn').addEventListener('click', () => {
+            oniClickCount++;
+            if (oniClickCount >= 5) {
+                const sBtn = document.getElementById('super-oni-btn');
+                if (sBtn.style.display !== 'block') {
+                    sBtn.style.display = 'block';
+                    document.body.style.backgroundColor = "#200";
+                    alert("隠し難易度：【超・おに】が解禁されました！");
+                }
+            }
+        });
+
+        // 難易度選択
+        document.querySelectorAll('.diff-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                document.querySelectorAll('.diff-btn').forEach(b => b.classList.remove('diff-selected'));
+                e.target.classList.add('diff-selected');
+                currentDiff = e.target.dataset.diff;
+            });
+        });
+
+        // ファイル処理
+        document.getElementById('file-input').addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            document.getElementById('file-name').innerText = "選択済み: " + file.name;
+            document.getElementById('loading-msg').style.display = 'block';
+            
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const arrayBuffer = await file.arrayBuffer();
+            audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+            
+            document.getElementById('loading-msg').style.display = 'none';
+            document.getElementById('start-btn').style.display = 'block';
+        });
+
+        function generateNotes() {
+            const data = audioBuffer.getChannelData(0);
+            const s = DIFF_SETTINGS[currentDiff];
+            const sampleRate = audioBuffer.sampleRate;
+            notes = [];
+
+            for (let i = 0; i < data.length; i += Math.floor(sampleRate * 0.02)) {
+                let sum = 0;
+                for (let j = 0; j < 400 && i+j < data.length; j++) sum += Math.abs(data[i+j]);
+                const vol = sum / 400;
+
+                if (vol > s.threshold) {
+                    const time = i / sampleRate;
+                    if (notes.length === 0 || time - notes[notes.length - 1].time > s.minGap) {
+                        notes.push({ time, type: Math.random() < s.kaRate ? 'ka' : 'don', hit: false });
+                    }
+                }
+            }
+        }
+
+        // 入力処理（統合）
+        function handleInput(type) {
+            if (!isPlaying) return;
+            const now = audioCtx.currentTime - startTime;
+            
+            // ビジュアル演出
+            const surf = document.getElementById('surface');
+            const rim = document.getElementById('rim');
+            if (type === 'don') {
+                surf.classList.add('hit-don');
+                setTimeout(() => surf.classList.remove('hit-don'), 60);
+            } else {
+                rim.classList.add('hit-ka');
+                setTimeout(() => rim.classList.remove('hit-ka'), 60);
+            }
+
+            // 判定
+            const hitNote = notes.find(n => !n.hit && Math.abs(n.time - now) < 0.15);
+            if (hitNote && hitNote.type === type) {
+                const diff = Math.abs(hitNote.time - now);
+                hitNote.hit = true;
+                if (diff < 0.06) showJudge("良", "#ffcc00");
+                else showJudge("可", "#ffffff");
+                combo++;
+                score += Math.floor(100 * (1 + combo/20));
+            } else {
+                combo = 0;
+            }
+            document.getElementById('combo').innerText = `${combo} COMBO`;
+            document.getElementById('score').innerText = String(score).padStart(7, '0');
+        }
+
+        function showJudge(text, color) {
+            const p = document.getElementById('judge-popup');
+            p.innerText = text;
+            p.style.color = color;
+            p.style.animation = 'none';
+            p.offsetHeight;
+            p.style.animation = 'pop 0.3s forwards';
+        }
+
+        // PCキーボード
+        window.addEventListener('keydown', (e) => {
+            const key = e.key.toLowerCase();
+            if (key === 'f' || key === 'j') handleInput('don');
+            if (key === 'd' || key === 'k') handleInput('ka');
+        });
+
+        // スマホタッチ（位置判定）
+        document.querySelector('.taiko-wrapper').addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const rect = document.getElementById('surface').getBoundingClientRect();
+            const centerX = rect.left + rect.width/2;
+            const centerY = rect.top + rect.height/2;
+            const dist = Math.hypot(touch.clientX - centerX, touch.clientY - centerY);
+            
+            if (dist < rect.width/2) handleInput('don');
+            else handleInput('ka');
+        });
+
+        document.getElementById('start-btn').addEventListener('click', () => {
+            document.getElementById('setup-screen').style.display = 'none';
+            generateNotes();
+            sourceNode = audioCtx.createBufferSource();
+            sourceNode.buffer = audioBuffer;
+            sourceNode.connect(audioCtx.destination);
+            startTime = audioCtx.currentTime + 1.5;
+            sourceNode.start(startTime);
+            isPlaying = true;
+            animate();
+        });
+
+        function animate() {
+            if (!isPlaying) return;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            const now = audioCtx.currentTime - startTime;
+            const s = DIFF_SETTINGS[currentDiff];
+
+            // 判定枠の影
+            ctx.fillStyle = "rgba(255,255,255,0.1)";
+            ctx.beginPath(); ctx.arc(80, 70, 45, 0, Math.PI*2); ctx.fill();
+
+            notes.forEach(n => {
+                if (n.hit) return;
+                const x = 80 + (n.time - now) * 100 * s.speed;
+
+                if (x > -100 && x < canvas.width + 100) {
+                    ctx.beginPath();
+                    ctx.arc(x, 70, 40, 0, Math.PI * 2);
+                    ctx.fillStyle = n.type === 'don' ? '#ff4500' : '#1e90ff';
+                    ctx.fill();
+                    ctx.strokeStyle = "white";
+                    ctx.lineWidth = 4;
+                    ctx.stroke();
+                    // 中心に文字
+                    ctx.fillStyle = "white";
+                    ctx.font = "bold 20px sans-serif";
+                    ctx.textAlign = "center";
+                    ctx.fillText(n.type === 'don' ? 'ド' : 'カ', x, 78);
+                }
+
+                if (now > n.time + 0.15 && !n.hit) {
+                    n.hit = true;
+                    combo = 0;
+                    document.getElementById('combo').innerText = `0 COMBO`;
+                }
+            });
+
+            if (now > audioBuffer.duration + 1) {
+                isPlaying = false;
+                document.getElementById('setup-screen').style.display = 'flex';
+                document.getElementById('title').innerText = "演奏終了！ SCORE: " + score;
+            } else {
+                requestAnimationFrame(animate);
+            }
+        }
+    </script>
+</body>
+</html>
