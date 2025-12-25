@@ -22,6 +22,24 @@
             user-select: none;
         }
 
+        .back-btn {
+            position: fixed;
+            top: 14px;
+            left: 14px;
+            z-index: 200;
+            padding: 10px 14px;
+            border-radius: 12px;
+            background: rgba(0,0,0,0.6);
+            color: #0ff;
+            border: 1px solid rgba(0,255,255,0.6);
+            text-decoration: none;
+            font-weight: 700;
+            letter-spacing: 1px;
+            box-shadow: 0 0 10px rgba(0,255,255,0.4);
+            pointer-events: auto;
+        }
+        .back-btn:hover { background: rgba(0,255,255,0.12); }
+
         /* 背景 */
         #bg-pattern {
             position: fixed;
@@ -187,6 +205,8 @@
 
     <div id="bg-pattern"></div>
 
+    <a class="back-btn" href="../index.html">← HUB</a>
+
     <div id="setup-screen">
         <h1 id="title">究極・太鼓リズム PRO</h1>
         <p>PC: [F][J]=ドン [D][K]=カッ<br>スマホ: 太鼓を直接タップ</p>
@@ -313,6 +333,8 @@
             if (!isPlaying) return;
             const now = audioCtx.currentTime - startTime;
             
+            playHitSound(type);
+
             // ビジュアル演出
             const surf = document.getElementById('surface');
             const rim = document.getElementById('rim');
@@ -324,20 +346,134 @@
                 setTimeout(() => rim.classList.remove('hit-ka'), 60);
             }
 
-            // 判定
-            const hitNote = notes.find(n => !n.hit && Math.abs(n.time - now) < 0.15);
-            if (hitNote && hitNote.type === type) {
-                const diff = Math.abs(hitNote.time - now);
+            // 判定: タイミング窓内のみミス扱い
+            const timingWindow = 0.15;
+            let hitNote = null;
+            let smallestDiff = Infinity;
+            notes.forEach(n => {
+                if (n.hit) return;
+                const diff = Math.abs(n.time - now);
+                if (diff < timingWindow && diff < smallestDiff) {
+                    smallestDiff = diff;
+                    hitNote = n;
+                }
+            });
+
+            if (!hitNote) {
+                return;
+            }
+
+            if (hitNote.type === type) {
                 hitNote.hit = true;
-                if (diff < 0.06) showJudge("良", "#ffcc00");
+                if (smallestDiff < 0.06) showJudge("良", "#ffcc00");
                 else showJudge("可", "#ffffff");
                 combo++;
                 score += Math.floor(100 * (1 + combo/20));
             } else {
+                hitNote.hit = true;
                 combo = 0;
             }
             document.getElementById('combo').innerText = `${combo} COMBO`;
             document.getElementById('score').innerText = String(score).padStart(7, '0');
+        }
+
+        function playHitSound(type) {
+            if (!audioCtx) return;
+            const now = audioCtx.currentTime;
+            if (type === 'don') {
+                // Low thump + body resonance + soft attack noise
+                const thump = audioCtx.createOscillator();
+                const thumpGain = audioCtx.createGain();
+                thump.type = 'sine';
+                thump.frequency.setValueAtTime(260, now);
+                thump.frequency.exponentialRampToValueAtTime(120, now + 0.16);
+                thumpGain.gain.setValueAtTime(0.0001, now);
+                thumpGain.gain.exponentialRampToValueAtTime(0.95, now + 0.01);
+                thumpGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.38);
+
+                const sub = audioCtx.createOscillator();
+                const subGain = audioCtx.createGain();
+                sub.type = 'sine';
+                sub.frequency.setValueAtTime(120, now);
+                sub.frequency.exponentialRampToValueAtTime(60, now + 0.22);
+                subGain.gain.setValueAtTime(0.0001, now);
+                subGain.gain.exponentialRampToValueAtTime(0.45, now + 0.02);
+                subGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.55);
+
+                const body = audioCtx.createOscillator();
+                const bodyGain = audioCtx.createGain();
+                body.type = 'triangle';
+                body.frequency.setValueAtTime(180, now);
+                body.frequency.exponentialRampToValueAtTime(130, now + 0.22);
+                bodyGain.gain.setValueAtTime(0.0001, now);
+                bodyGain.gain.exponentialRampToValueAtTime(0.4, now + 0.015);
+                bodyGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.5);
+
+                const noiseBuffer = audioCtx.createBuffer(1, Math.floor(audioCtx.sampleRate * 0.03), audioCtx.sampleRate);
+                const noiseData = noiseBuffer.getChannelData(0);
+                for (let i = 0; i < noiseData.length; i++) {
+                    noiseData[i] = (Math.random() * 2 - 1) * 0.35;
+                }
+                const noise = audioCtx.createBufferSource();
+                noise.buffer = noiseBuffer;
+                const noiseFilter = audioCtx.createBiquadFilter();
+                noiseFilter.type = 'lowpass';
+                noiseFilter.frequency.setValueAtTime(1200, now);
+                const noiseGain = audioCtx.createGain();
+                noiseGain.gain.setValueAtTime(0.0001, now);
+                noiseGain.gain.exponentialRampToValueAtTime(0.35, now + 0.005);
+                noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.08);
+
+                thump.connect(thumpGain).connect(audioCtx.destination);
+                sub.connect(subGain).connect(audioCtx.destination);
+                body.connect(bodyGain).connect(audioCtx.destination);
+                noise.connect(noiseFilter).connect(noiseGain).connect(audioCtx.destination);
+
+                thump.start(now);
+                sub.start(now);
+                body.start(now);
+                noise.start(now);
+                thump.stop(now + 0.4);
+                sub.stop(now + 0.6);
+                body.stop(now + 0.55);
+                noise.stop(now + 0.1);
+                return;
+            }
+
+            // Sharp rimshot: bright noise + click
+            const buffer = audioCtx.createBuffer(1, Math.floor(audioCtx.sampleRate * 0.05), audioCtx.sampleRate);
+            const data = buffer.getChannelData(0);
+            for (let i = 0; i < data.length; i++) {
+                data[i] = (Math.random() * 2 - 1) * 0.9;
+            }
+            const noise = audioCtx.createBufferSource();
+            noise.buffer = buffer;
+            const bandpass = audioCtx.createBiquadFilter();
+            bandpass.type = 'bandpass';
+            bandpass.frequency.setValueAtTime(3200, now);
+            bandpass.Q.setValueAtTime(1.2, now);
+            const hp = audioCtx.createBiquadFilter();
+            hp.type = 'highpass';
+            hp.frequency.setValueAtTime(1800, now);
+            const gain = audioCtx.createGain();
+            gain.gain.setValueAtTime(0.0001, now);
+            gain.gain.exponentialRampToValueAtTime(0.7, now + 0.003);
+            gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.07);
+
+            const click = audioCtx.createOscillator();
+            const clickGain = audioCtx.createGain();
+            click.type = 'square';
+            click.frequency.setValueAtTime(900, now);
+            clickGain.gain.setValueAtTime(0.0001, now);
+            clickGain.gain.exponentialRampToValueAtTime(0.25, now + 0.002);
+            clickGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.03);
+
+            noise.connect(bandpass).connect(hp).connect(gain).connect(audioCtx.destination);
+            click.connect(clickGain).connect(audioCtx.destination);
+            noise.start(now);
+            click.start(now);
+            noise.stop(now + 0.08);
+            click.stop(now + 0.04);
         }
 
         function showJudge(text, color) {

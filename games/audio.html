@@ -25,6 +25,24 @@
             overflow: hidden;
         }
 
+        .back-btn {
+            position: fixed;
+            top: 14px;
+            left: 14px;
+            z-index: 200;
+            padding: 10px 14px;
+            border-radius: 12px;
+            background: rgba(0,0,0,0.6);
+            color: #0ff;
+            border: 1px solid rgba(0,255,255,0.6);
+            text-decoration: none;
+            font-weight: 700;
+            letter-spacing: 1px;
+            box-shadow: 0 0 10px rgba(0,255,255,0.4);
+            pointer-events: auto;
+        }
+        .back-btn:hover { background: rgba(0,255,255,0.12); }
+
         /* プレイヤー外枠 */
         .player-container {
             position: relative;
@@ -198,6 +216,8 @@
     </style>
 </head>
 <body>
+
+    <a class="back-btn" href="../index.html">← HUB</a>
 
     <div class="player-container" id="player">
         <div class="status-text" id="status">Ready</div>
