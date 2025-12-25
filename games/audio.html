@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VibeRecord - Hall Effect Player</title>
+    <style>
+        :root {
+            --bg-color: #1a1a1a;
+            --accent-color: #d4af37; /* Gold */
+            --record-bg: #050505;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg-color);
+            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            color: white;
+            overflow: hidden;
+        }
+
+        /* プレイヤー外枠 */
+        .player-container {
+            position: relative;
+            text-align: center;
+            width: 100%;
+            max-width: 500px;
+        }
+
+        /* レコードの土台 */
+        .turntable {
+            position: relative;
+            width: 320px;
+            height: 320px;
+            margin: 0 auto 50px auto;
+            background: #222;
+            border-radius: 20px;
+            padding: 20px;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+        }
+
+        /* レコード盤 */
+        .record {
+            width: 320px;
+            height: 320px;
+            background: 
+                radial-gradient(circle at center, transparent 0%, transparent 2%, #111 2%, #111 3%, transparent 3%),
+                repeating-radial-gradient(rgba(40,40,40,0.5) 0px, rgba(10,10,10,0.5) 2px, rgba(40,40,40,0.5) 4px),
+                var(--record-bg);
+            border-radius: 50%;
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 1s ease-in-out;
+            box-shadow: 0 0 20px rgba(0,0,0,0.8);
+        }
+
+        /* レコードのラベル（中心） */
+        .record-label {
+            width: 100px;
+            height: 100px;
+            background: var(--accent-color);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #000;
+            font-weight: bold;
+            font-size: 12px;
+            border: 5px solid #000;
+        }
+
+        /* 回転アニメーション */
+        @keyframes rotate {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
+        .playing .record {
+            animation: rotate 2s linear infinite;
+        }
+
+        /* トーンアーム（針） */
+        .tonearm {
+            position: absolute;
+            top: 20px;
+            right: 0;
+            width: 120px;
+            height: 10px;
+            background: #555;
+            transform-origin: 90% 50%;
+            transform: rotate(70deg);
+            transition: transform 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            z-index: 10;
+            border-radius: 5px;
+        }
+
+        .playing .tonearm {
+            transform: rotate(110deg);
+        }
+
+        /* コントロールパネル */
+        .controls {
+            margin-top: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            align-items: center;
+        }
+
+        .btn {
+            background: transparent;
+            border: 1px solid var(--accent-color);
+            color: var(--accent-color);
+            padding: 12px 30px;
+            border-radius: 30px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: all 0.3s;
+            width: 200px;
+        }
+
+        .btn:hover {
+            background: var(--accent-color);
+            color: #000;
+        }
+
+        .btn.active {
+            background: var(--accent-color);
+            color: #000;
+            box-shadow: 0 0 15px var(--accent-color);
+        }
+
+        /* ファイル入力の隠蔽と装飾 */
+        #file-input { display: none; }
+        
+        .status-text {
+            font-size: 14px;
+            color: #888;
+            margin-bottom: 10px;
+            height: 1em;
+        }
+
+        /* ホールエフェクトのインジケーター */
+        .fx-label {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        .time-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .time-input {
+            width: 90px;
+            padding: 8px 10px;
+            border-radius: 8px;
+            border: 1px solid #444;
+            background: #111;
+            color: #fff;
+            font-size: 14px;
+            text-align: center;
+        }
+
+        .time-label {
+            font-size: 12px;
+            color: #aaa;
+            letter-spacing: 1px;
+        }
+
+        .time-display {
+            font-size: 13px;
+            color: #bbb;
+            letter-spacing: 1px;
+        }
+
+        .progress {
+            width: 100%;
+            max-width: 420px;
+        }
+
+        .progress input[type="range"] {
+            width: 100%;
+            accent-color: var(--accent-color);
+        }
+    </style>
+</head>
+<body>
+
+    <div class="player-container" id="player">
+        <div class="status-text" id="status">Ready</div>
+        
+        <div class="turntable">
+            <div class="tonearm"></div>
+            <div class="record">
+                <div class="record-label">VIBE HALL</div>
+            </div>
+        </div>
+
+        <div class="controls">
+            <label for="file-input" class="btn">SELECT MUSIC</label>
+            <input type="file" id="file-input" accept="audio/*,video/*">
+
+            <button id="play-btn" class="btn">PLAY / PAUSE</button>
+
+            <div class="time-row">
+                <div class="time-display" id="time-display">00:00 / 00:00</div>
+            </div>
+
+            <div class="time-row">
+                <div class="time-label">JUMP TO</div>
+                <input id="time-input" class="time-input" type="text" inputmode="numeric" placeholder="00:00">
+                <button id="jump-btn" class="btn">SET TIME</button>
+            </div>
+
+            <div class="progress">
+                <input id="progress-input" type="range" min="0" max="1000" value="0">
+            </div>
+            
+            <div>
+                <div class="fx-label">Hall Reverb</div>
+                <button id="hall-toggle" class="btn">OFF</button>
+            </div>
+        </div>
+    </div>
+
+    <audio id="audio-element" loop></audio>
+
+    <script>
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const audioElement = document.getElementById('audio-element');
+        const source = audioContext.createMediaElementSource(audioElement);
+        
+        // エフェクトの作成
+        const dryGain = audioContext.createGain();
+        const wetGain = audioContext.createGain();
+        const convolver = audioContext.createConvolver();
+
+        // 初期設定: ホール音をオフ（ドライ100%、ウェット0%）
+        dryGain.gain.value = 1.0;
+        wetGain.gain.value = 0.0;
+
+        // ルーティング: Source -> Split -> Destination
+        //                     |-> Convolver -> Destination
+        source.connect(dryGain).connect(audioContext.destination);
+        source.connect(convolver).connect(wetGain).connect(audioContext.destination);
+
+        // 人工的にホールのインパルス応答（残響）を生成
+        function createHallReverb() {
+            const length = audioContext.sampleRate * 3; // 3秒の残響
+            const buffer = audioContext.createBuffer(2, length, audioContext.sampleRate);
+            for (let channel = 0; channel < 2; channel++) {
+                const data = buffer.getChannelData(channel);
+                for (let i = 0; i < length; i++) {
+                    // ホワイトノイズを指数関数的に減衰させる
+                    data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, 2);
+                }
+            }
+            convolver.buffer = buffer;
+        }
+        createHallReverb();
+
+        // UI制御
+        const fileInput = document.getElementById('file-input');
+        const playBtn = document.getElementById('play-btn');
+        const hallToggle = document.getElementById('hall-toggle');
+        const player = document.getElementById('player');
+        const statusText = document.getElementById('status');
+        const timeDisplay = document.getElementById('time-display');
+        const timeInput = document.getElementById('time-input');
+        const jumpBtn = document.getElementById('jump-btn');
+        const progressInput = document.getElementById('progress-input');
+
+        let isHallOn = false;
+
+        // ファイル読み込み
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                const url = URL.createObjectURL(file);
+                audioElement.src = url;
+                statusText.innerText = file.name.substring(0, 30) + "...";
+            }
+        });
+
+        function formatTime(seconds) {
+            if (!Number.isFinite(seconds)) {
+                return "00:00";
+            }
+            const minutes = Math.floor(seconds / 60);
+            const secs = Math.floor(seconds % 60);
+            return String(minutes).padStart(2, "0") + ":" + String(secs).padStart(2, "0");
+        }
+
+        function updateTimeDisplay() {
+            const current = formatTime(audioElement.currentTime);
+            const duration = formatTime(audioElement.duration);
+            timeDisplay.innerText = current + " / " + duration;
+        }
+
+        function parseTimeInput(value) {
+            const digits = value.replace(/[^0-9]/g, "");
+            if (digits.length === 0) {
+                return { seconds: 0, formatted: "00:00" };
+            }
+            const padded = digits.padStart(4, "0");
+            const mins = Number(padded.slice(0, -2));
+            const secs = Number(padded.slice(-2));
+            const normalizedSecs = Math.min(secs, 59);
+            return {
+                seconds: mins * 60 + normalizedSecs,
+                formatted: String(mins).padStart(2, "0") + ":" + String(normalizedSecs).padStart(2, "0")
+            };
+        }
+
+        function jumpToTime() {
+            const parsed = parseTimeInput(timeInput.value);
+            timeInput.value = parsed.formatted;
+            const target = Math.max(0, parsed.seconds);
+            if (Number.isFinite(audioElement.duration)) {
+                audioElement.currentTime = Math.min(target, audioElement.duration);
+            } else {
+                audioElement.currentTime = target;
+            }
+            updateTimeDisplay();
+        }
+
+        // 再生・停止
+        playBtn.addEventListener('click', () => {
+            if (audioContext.state === 'suspended') {
+                audioContext.resume();
+            }
+
+            if (audioElement.paused) {
+                audioElement.play();
+                player.classList.add('playing');
+            } else {
+                audioElement.pause();
+                player.classList.remove('playing');
+            }
+        });
+
+        jumpBtn.addEventListener('click', jumpToTime);
+        timeInput.addEventListener('input', () => {
+            const parsed = parseTimeInput(timeInput.value);
+            timeInput.value = parsed.formatted;
+        });
+        timeInput.addEventListener('blur', () => {
+            const parsed = parseTimeInput(timeInput.value);
+            timeInput.value = parsed.formatted;
+        });
+        timeInput.addEventListener('keydown', (event) => {
+            if (event.key === "Enter") {
+                jumpToTime();
+            }
+        });
+
+        audioElement.addEventListener('loadedmetadata', updateTimeDisplay);
+        audioElement.addEventListener('timeupdate', updateTimeDisplay);
+        audioElement.addEventListener('timeupdate', () => {
+            if (Number.isFinite(audioElement.duration) && !progressInput.matches(":active")) {
+                progressInput.value = Math.round((audioElement.currentTime / audioElement.duration) * 1000);
+            }
+        });
+        audioElement.addEventListener('loadedmetadata', () => {
+            progressInput.value = 0;
+        });
+
+        progressInput.addEventListener('input', () => {
+            if (!Number.isFinite(audioElement.duration)) {
+                return;
+            }
+            const ratio = Number(progressInput.value) / 1000;
+            audioElement.currentTime = audioElement.duration * ratio;
+        });
+
+        // ホールエフェクト切り替え
+        hallToggle.addEventListener('click', () => {
+            isHallOn = !isHallOn;
+            if (isHallOn) {
+                wetGain.gain.linearRampToValueAtTime(1.2, audioContext.currentTime + 0.5);
+                dryGain.gain.linearRampToValueAtTime(0.7, audioContext.currentTime + 0.5);
+                hallToggle.innerText = "ON";
+                hallToggle.classList.add('active');
+            } else {
+                wetGain.gain.linearRampToValueAtTime(0.0, audioContext.currentTime + 0.5);
+                dryGain.gain.linearRampToValueAtTime(1.0, audioContext.currentTime + 0.5);
+                hallToggle.innerText = "OFF";
+                hallToggle.classList.remove('active');
+            }
+        });
+    </script>
+</body>
+</html>
